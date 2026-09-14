@@ -62,6 +62,7 @@ interface MapToolbarMobileProps {
     onDownloadGeoJSON: () => void;
     onUploadGeoJSON: () => void;
     onImportOpenMower: () => void;
+    onResetMowingProgress: () => void;
     onMowArea: (key: string) => Promise<void>;
     selectedFeatureCount?: number;
     onEditSelectedFeature?: () => void;
@@ -75,6 +76,7 @@ interface MapToolbarMobileProps {
     onPlaceDock?: () => void;
     dockPlacementMode?: boolean;
     stateName?: string;
+    highLevelState?: number;
     emergency?: boolean;
     onStart?: () => Promise<void>;
     onHome?: () => Promise<void>;
@@ -95,16 +97,16 @@ export const MapToolbarMobile = ({
     historyIndex, editHistoryLength, mowingAreas,
     onEditMap, onSaveMap, onUndo, onRedo, onToggleSatellite,
     onOpenManualController,
-    onBackupMap, onRestoreMap, onDownloadGeoJSON, onUploadGeoJSON, onImportOpenMower,
+    onBackupMap, onRestoreMap, onDownloadGeoJSON, onUploadGeoJSON, onImportOpenMower, onResetMowingProgress,
     onMowArea, selectedFeatureCount = 0, onEditSelectedFeature,
     onDrawPolygon, onDrawShape, onDrawEmoji, onTrash, onCombine, onSubtract, onSplit,
     onPlaceDock, dockPlacementMode,
-    stateName, emergency,
+    stateName, highLevelState, emergency,
     onStart, onHome, onEmergencyOn, onEmergencyOff,
     onAreaRecording, onMowNextArea, onContinueOrPause,
     onBladeForward, onBladeBackward, onBladeOff,
 }: MapToolbarMobileProps) => {
-    const {colors} = useThemeMode();
+    const {colors, displayMode} = useThemeMode();
     const {notification} = App.useApp();
     const {t} = useTranslation();
     const [mowLoading, setMowLoading] = useState(false);
@@ -140,8 +142,8 @@ export const MapToolbarMobile = ({
         WebkitOverflowScrolling: "touch",
         alignItems: "center",
         background: colors.glassBackground,
-        backdropFilter: "blur(22px) saturate(140%)",
-        WebkitBackdropFilter: "blur(22px) saturate(140%)",
+        backdropFilter: displayMode === 'visual' ? 'blur(22px) saturate(140%)' : undefined,
+        WebkitBackdropFilter: displayMode === 'visual' ? 'blur(22px) saturate(140%)' : undefined,
         borderRadius: 18,
         border: colors.glassBorder,
         boxShadow: colors.glassShadow,
@@ -166,8 +168,12 @@ export const MapToolbarMobile = ({
         boxShadow: colors.glassShadow,
     };
 
-    const isIdle = stateName === "IDLE" || stateName === "IDLE_DOCKED";
+    // DIG_OBSTRUCTION is a held robot (numeric state IDLE, wheels hard-stopped
+    // by firmware): the exits are Play after lifting it clear, or Home — so
+    // offer Continue, not Pause.
+    const isIdle = stateName === "IDLE" || stateName === "IDLE_DOCKED" || stateName === "DIG_OBSTRUCTION";
     const isRecording = stateName === "RECORDING";
+    const resetDisabled = highLevelState === undefined || highLevelState >= 2;
 
     const safeCall = (fn?: () => Promise<void>) => {
         fn?.().catch((e: Error) => {
@@ -193,6 +199,13 @@ export const MapToolbarMobile = ({
         {key: "backup", icon: <DatabaseOutlined />, label: t("mapToolbarMobile.backupMap")},
         {key: "restore", icon: <DatabaseOutlined />, label: t("mapToolbarMobile.restoreMap")},
         {key: "importOpenMower", icon: <ImportOutlined />, label: t("mapToolbarMobile.importFromOpenMower")},
+        {
+            key: "resetMowingProgress",
+            icon: <DeleteOutlined />,
+            label: t("resetMowingProgress.action"),
+            danger: true,
+            disabled: resetDisabled,
+        },
         {type: "divider"},
         {key: "download", icon: <DownloadOutlined />, label: t("mapToolbarMobile.downloadGeojson")},
         ...(editMap
@@ -212,6 +225,7 @@ export const MapToolbarMobile = ({
             case "backup": onBackupMap(); break;
             case "restore": onRestoreMap(); break;
             case "importOpenMower": onImportOpenMower(); break;
+            case "resetMowingProgress": onResetMowingProgress(); break;
             case "download": onDownloadGeoJSON(); break;
             case "upload": onUploadGeoJSON(); break;
         }

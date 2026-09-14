@@ -20,6 +20,7 @@ import {
     CheckOutlined,
     CloseOutlined,
     ImportOutlined,
+    DeleteOutlined,
 } from "@ant-design/icons";
 import type {MenuInfo} from "rc-menu/lib/interface";
 import {useTranslation} from "react-i18next";
@@ -35,6 +36,7 @@ interface MapToolbarProps {
     useSatellite: boolean;
     mowingAreas: MowingAreaItem[];
     stateName?: string;
+    highLevelState?: number;
     emergency?: boolean;
     onEditMap: () => void;
     onToggleSatellite: () => void;
@@ -43,6 +45,7 @@ interface MapToolbarProps {
     onRestoreMap: () => void;
     onDownloadGeoJSON: () => void;
     onImportOpenMower: () => void;
+    onResetMowingProgress: () => void;
     onMowArea: (key: string) => Promise<void>;
     pitched?: boolean;
     onTogglePitch?: () => void;
@@ -61,10 +64,10 @@ interface MapToolbarProps {
 }
 
 export const MapToolbar = ({
-    useSatellite, mowingAreas, stateName, emergency,
+    useSatellite, mowingAreas, stateName, highLevelState, emergency,
     onEditMap, onToggleSatellite,
     onOpenManualController,
-    onBackupMap, onRestoreMap, onDownloadGeoJSON, onImportOpenMower,
+    onBackupMap, onRestoreMap, onDownloadGeoJSON, onImportOpenMower, onResetMowingProgress,
     onMowArea, pitched, onTogglePitch,
     onStart, onHome, onEmergencyOn, onEmergencyOff,
     onAreaRecording, onMowNextArea, onContinueOrPause,
@@ -73,8 +76,16 @@ export const MapToolbar = ({
 }: MapToolbarProps) => {
     const {notification} = App.useApp();
     const {t} = useTranslation();
-    const isIdle = stateName === "IDLE" || stateName === "IDLE_DOCKED";
+    // DIG_OBSTRUCTION is a held robot (numeric state IDLE, wheels hard-stopped
+    // by firmware): the exits are Play after lifting it clear, or Home — so
+    // offer Continue, not Pause.
+    const isIdle = stateName === "IDLE" || stateName === "IDLE_DOCKED" || stateName === "DIG_OBSTRUCTION";
     const isRecording = stateName === "RECORDING";
+    // Numeric state is the authoritative signal. States 2 and above are
+    // autonomous, recording, manual mowing, or a future active mode; clearing
+    // persisted progress during any of them could race an active mission.
+    // Fail closed until the first status frame arrives.
+    const resetDisabled = highLevelState === undefined || highLevelState >= 2;
 
     const safeCall = (fn?: () => Promise<void>) => {
         fn?.().catch((e: Error) => {
@@ -105,6 +116,13 @@ export const MapToolbar = ({
         {key: "backup", icon: <DatabaseOutlined />, label: t("mapToolbar.backupMap")},
         {key: "restore", icon: <DatabaseOutlined />, label: t("mapToolbar.restoreMap")},
         {key: "importOpenMower", icon: <ImportOutlined />, label: t("mapToolbar.importFromOpenMower")},
+        {
+            key: "resetMowingProgress",
+            icon: <DeleteOutlined />,
+            label: t("resetMowingProgress.action"),
+            danger: true,
+            disabled: resetDisabled,
+        },
         {type: "divider"},
         {key: "download", icon: <DownloadOutlined />, label: t("mapToolbar.downloadGeojson")},
     ];
@@ -123,6 +141,7 @@ export const MapToolbar = ({
             case "backup": onBackupMap(); break;
             case "restore": onRestoreMap(); break;
             case "importOpenMower": onImportOpenMower(); break;
+            case "resetMowingProgress": onResetMowingProgress(); break;
             case "download": onDownloadGeoJSON(); break;
         }
     };
