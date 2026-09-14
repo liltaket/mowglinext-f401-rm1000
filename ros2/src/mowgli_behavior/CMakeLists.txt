@@ -9,7 +9,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -42,11 +42,14 @@ find_package(rcl_interfaces REQUIRED)
 
 add_executable(behavior_tree_node
   src/behavior_tree_node.cpp
+  src/battery_filter.cpp
   src/condition_nodes.cpp
   src/navigation_nodes.cpp
   src/docking_nodes.cpp
+  src/escape_nodes.cpp
   src/calibration_nodes.cpp
   src/status_nodes.cpp
+  src/status_snapshot.cpp
   src/utility_nodes.cpp
   src/coverage_nodes.cpp
   src/coverage_persistence.cpp
@@ -59,23 +62,23 @@ target_include_directories(behavior_tree_node PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
-ament_target_dependencies(behavior_tree_node
-  ament_index_cpp
-  rclcpp
-  rclcpp_action
-  behaviortree_cpp
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-  nav2_msgs
-  sensor_msgs
-  nav_msgs
-  geometry_msgs
-  action_msgs
-  std_msgs
-  std_srvs
-  mowgli_interfaces
-  rcl_interfaces
+target_link_libraries(behavior_tree_node
+  ${ament_index_cpp_TARGETS}
+  ${rclcpp_TARGETS}
+  ${rclcpp_action_TARGETS}
+  ${behaviortree_cpp_TARGETS}
+  ${tf2_TARGETS}
+  ${tf2_ros_TARGETS}
+  ${tf2_geometry_msgs_TARGETS}
+  ${nav2_msgs_TARGETS}
+  ${sensor_msgs_TARGETS}
+  ${nav_msgs_TARGETS}
+  ${geometry_msgs_TARGETS}
+  ${action_msgs_TARGETS}
+  ${std_msgs_TARGETS}
+  ${std_srvs_TARGETS}
+  ${mowgli_interfaces_TARGETS}
+  ${rcl_interfaces_TARGETS}
 )
 
 # ---------------------------------------------------------------------------
@@ -120,14 +123,14 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_recording_nodes
-    rclcpp
-    geometry_msgs
-    behaviortree_cpp
-    mowgli_interfaces
-    nav_msgs
-    tf2
-    tf2_ros
+  target_link_libraries(test_recording_nodes
+    ${rclcpp_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
   )
 
   # ---- test_obstacle_recovery ----
@@ -144,18 +147,18 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_obstacle_recovery
-    rclcpp
-    behaviortree_cpp
-    mowgli_interfaces
-    nav2_msgs
-    nav_msgs
-    geometry_msgs
-    std_msgs
-    std_srvs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
+  target_link_libraries(test_obstacle_recovery
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
   )
 
   # ---- test_docking_boundary_exempt ----
@@ -173,18 +176,18 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_docking_boundary_exempt
-    rclcpp
-    behaviortree_cpp
-    mowgli_interfaces
-    nav2_msgs
-    nav_msgs
-    geometry_msgs
-    std_msgs
-    std_srvs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
+  target_link_libraries(test_docking_boundary_exempt
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
   )
 
   # ---- test_set_nav2_lifecycle ----
@@ -201,21 +204,51 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_set_nav2_lifecycle
-    rclcpp
-    rclcpp_action
-    behaviortree_cpp
-    mowgli_interfaces
-    nav2_msgs
-    nav_msgs
-    geometry_msgs
-    std_msgs
-    std_srvs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-    rcl_interfaces
-    action_msgs
+  target_link_libraries(test_set_nav2_lifecycle
+    ${rclcpp_TARGETS}
+    ${rclcpp_action_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+    ${rcl_interfaces_TARGETS}
+    ${action_msgs_TARGETS}
+  )
+
+  # ---- test_boundary_recovery ----
+  # Verifies the safety-critical keepout filter service sequence used to
+  # recover a robot whose current global-costmap cell is outside the area.
+  ament_add_gtest(test_boundary_recovery
+    test/test_boundary_recovery.cpp
+    src/navigation_nodes.cpp
+  )
+
+  target_include_directories(test_boundary_recovery PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  target_link_libraries(test_boundary_recovery
+    ${rclcpp_TARGETS}
+    ${rclcpp_action_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+    ${rcl_interfaces_TARGETS}
+    ${action_msgs_TARGETS}
   )
 
   # ---- test_get_next_unmowed_area ----
@@ -223,10 +256,16 @@ if(BUILD_TESTING)
   # real in-process get_mowing_area service returning a nav-only area + a mowing
   # area and ticks GetNextUnmowedArea to confirm the nav-only zone is never
   # selected for coverage.
+  # Also covers targeted runs (~/start_in_area): "mow only area N" is session
+  # state, so the run must not roll over into another area when the BT re-enters
+  # MowingSequence after the target completes. status_nodes/status_snapshot are
+  # linked in for the real EndSession node (the session boundary that clears it).
   ament_add_gtest(test_get_next_unmowed_area
     test/test_get_next_unmowed_area.cpp
     src/coverage_nodes.cpp
     src/coverage_persistence.cpp
+    src/status_nodes.cpp
+    src/status_snapshot.cpp
   )
 
   target_include_directories(test_get_next_unmowed_area PUBLIC
@@ -234,21 +273,59 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_get_next_unmowed_area
-    rclcpp
-    rclcpp_action
-    behaviortree_cpp
-    mowgli_interfaces
-    nav2_msgs
-    nav_msgs
-    geometry_msgs
-    std_msgs
-    std_srvs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-    rcl_interfaces
-    action_msgs
+  target_link_libraries(test_get_next_unmowed_area
+    ${rclcpp_TARGETS}
+    ${rclcpp_action_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+    ${rcl_interfaces_TARGETS}
+    ${action_msgs_TARGETS}
+  )
+
+  # ---- test_start_occupied_retry ----
+  # Regression for issue #487: one occupied start pose forfeited a whole field.
+  # Covers the pure transit-failure classifier (nav2 error_code + error_msg
+  # fallback), the consume-once IsCoverageStartBlocked condition, and a
+  # STRUCTURAL check that main_tree.xml still carries the non-motion recovery
+  # branch (clear costmaps + retry) and still commands no escape motion.
+  ament_add_gtest(test_start_occupied_retry
+    test/test_start_occupied_retry.cpp
+    src/condition_nodes.cpp
+  )
+
+  target_include_directories(test_start_occupied_retry PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # The structural half reads the real tree from the source tree.
+  target_compile_definitions(test_start_occupied_retry PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
+  )
+
+  target_link_libraries(test_start_occupied_retry
+    ${rclcpp_TARGETS}
+    ${rclcpp_action_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+    ${rcl_interfaces_TARGETS}
+    ${action_msgs_TARGETS}
   )
 
   # Round-trip + staleness coverage for the disk-backed resume state (issue #334:
@@ -264,13 +341,13 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_coverage_persistence
-    rclcpp
-    behaviortree_cpp
-    mowgli_interfaces
-    nav_msgs
-    geometry_msgs
-    tf2_ros
+  target_link_libraries(test_coverage_persistence
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${tf2_ros_TARGETS}
   )
 
   ament_add_gtest(test_gnss_status_authority
@@ -282,8 +359,8 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_gnss_status_authority
-    mowgli_interfaces
+  target_link_libraries(test_gnss_status_authority
+    ${mowgli_interfaces_TARGETS}
   )
 
   # Single-source regression guard (task #14): FollowStrip::kSegmentTransitGap
@@ -291,6 +368,26 @@ if(BUILD_TESTING)
   # test_coverage_transit_gap.cpp. Header-only on both sides (constexpr class
   # member + constexpr free constant), so no coverage_nodes.cpp / .cpp source
   # needs linking here.
+  # Structural pin: navigate_to_pose_transit.xml selects transit_goal_checker
+  # and otherwise matches navigate_to_pose.xml (field 2026-09-12).
+  ament_add_gtest(test_transit_tree
+    test/test_transit_tree.cpp
+  )
+  target_compile_definitions(test_transit_tree PRIVATE
+    MOWGLI_TRANSIT_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/navigate_to_pose_transit.xml"
+    MOWGLI_NAV_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/navigate_to_pose.xml"
+  )
+
+  # Blade pause/resume across a short LiDAR dropout (scan_pause.hpp) — pure
+  # header, no ROS.
+  ament_add_gtest(test_scan_pause
+    test/test_scan_pause.cpp
+  )
+  target_include_directories(test_scan_pause PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
   ament_add_gtest(test_coverage_transit_gap
     test/test_coverage_transit_gap.cpp
   )
@@ -300,21 +397,21 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_coverage_transit_gap
-    rclcpp
-    rclcpp_action
-    behaviortree_cpp
-    mowgli_interfaces
-    nav2_msgs
-    nav_msgs
-    geometry_msgs
-    std_msgs
-    std_srvs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-    rcl_interfaces
-    action_msgs
+  target_link_libraries(test_coverage_transit_gap
+    ${rclcpp_TARGETS}
+    ${rclcpp_action_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+    ${rcl_interfaces_TARGETS}
+    ${action_msgs_TARGETS}
   )
 
   # ---- test_coverage_resume_location ----
@@ -333,21 +430,21 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_coverage_resume_location
-    rclcpp
-    rclcpp_action
-    behaviortree_cpp
-    mowgli_interfaces
-    nav2_msgs
-    nav_msgs
-    geometry_msgs
-    std_msgs
-    std_srvs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-    rcl_interfaces
-    action_msgs
+  target_link_libraries(test_coverage_resume_location
+    ${rclcpp_TARGETS}
+    ${rclcpp_action_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+    ${rcl_interfaces_TARGETS}
+    ${action_msgs_TARGETS}
   )
 
   # ---- test_swath_progress ----
@@ -366,21 +463,21 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_swath_progress
-    rclcpp
-    rclcpp_action
-    behaviortree_cpp
-    mowgli_interfaces
-    nav2_msgs
-    nav_msgs
-    geometry_msgs
-    std_msgs
-    std_srvs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-    rcl_interfaces
-    action_msgs
+  target_link_libraries(test_swath_progress
+    ${rclcpp_TARGETS}
+    ${rclcpp_action_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+    ${rcl_interfaces_TARGETS}
+    ${action_msgs_TARGETS}
   )
 
   # ---- test_detour_resume ----
@@ -397,9 +494,42 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_detour_resume
-    geometry_msgs
-    mowgli_interfaces
+  target_link_libraries(test_detour_resume
+    ${geometry_msgs_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+  )
+
+  # ---- test_start_blocked_escape ----
+  # SAFETY-CRITICAL (issue #487): the ONLY new physical motion in the
+  # start-occupied workstream. Pure header, no ROS — pins the two field cases
+  # (post-undock drives FORWARD, mid-mow drives REVERSE), every stand-down
+  # (unknown / stale / ~zero direction, blade not verified off, missing
+  # start-blocked signal), both bounds, and the compiled ceilings.
+  ament_add_gtest(test_start_blocked_escape
+    test/test_start_blocked_escape.cpp
+  )
+
+  target_include_directories(test_start_blocked_escape PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # ---- test_localization_health ----
+  # Unit tests for the LocalizationGuard's input signal
+  # (localization_health.hpp). Pins the 2026-08-20 livelock: pivot/slip
+  # covariance inflation on a healthy RTK-Fixed receiver must NOT pause
+  # mowing, while the 2026-08-02 plain-GPS fallback still must.
+  # Header-only helper -> no source link.
+  ament_add_gtest(test_localization_health
+    test/test_localization_health.cpp
+  )
+
+  target_include_directories(test_localization_health PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+  target_link_libraries(test_localization_health
+    ${mowgli_interfaces_TARGETS}
   )
 
   # ---- test_battery_critical_resume ----
@@ -410,6 +540,7 @@ if(BUILD_TESTING)
     test/test_battery_critical_resume.cpp
     src/condition_nodes.cpp
     src/status_nodes.cpp
+    src/status_snapshot.cpp
     src/coverage_persistence.cpp
   )
 
@@ -418,18 +549,218 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
-  ament_target_dependencies(test_battery_critical_resume
-    rclcpp
-    behaviortree_cpp
-    mowgli_interfaces
-    nav2_msgs
-    nav_msgs
-    geometry_msgs
-    std_msgs
-    std_srvs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
+  target_link_libraries(test_battery_critical_resume
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+  )
+
+  # ---- test_manual_resume ----
+  # Operator-forced resume out of a mid-session charge hold: Play
+  # (COMMAND_START) while CHARGING / CRITICAL_BATTERY_CHARGING sets
+  # BTContext::manual_resume_requested, and IsManualResumeRequested in both
+  # wait loops consumes it above battery_manual_resume_pct. Pins the node's
+  # consume/refuse/stale semantics, the handler's decision helper, the wait
+  # loop's exit order, and structurally that BOTH loops in main_tree.xml carry
+  # the node, poll at <= 5 s, and still bound at 8 h.
+  ament_add_gtest(test_manual_resume
+    test/test_manual_resume.cpp
+    src/condition_nodes.cpp
+  )
+
+  target_include_directories(test_manual_resume PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # The structural half reads the real tree from the source tree.
+  target_compile_definitions(test_manual_resume PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
+  )
+
+  target_link_libraries(test_manual_resume
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+  )
+
+  # ---- test_guard_fallthrough ----
+  # Regression for the "blocking guard falls through into MainLogic" bug
+  # class (issues #459, #445). LocalizationGuard's handler ended with a
+  # WaitForDuration that returns SUCCESS, so the Root ReactiveSequence
+  # advanced into MainLogic -> MowingSequence once per cycle and restarted
+  # mowing from PREFLIGHT_CHECK/UNDOCKING every 2 s while sigma_xy flapped.
+  # Covers the guard behaviour AND asserts structurally that every blocking
+  # guard in main_tree.xml still terminates with <AlwaysFailure/>, so a
+  # newly added guard cannot reintroduce it.
+  ament_add_gtest(test_guard_fallthrough
+    test/test_guard_fallthrough.cpp
+    src/condition_nodes.cpp
+  )
+
+  target_include_directories(test_guard_fallthrough PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # The structural half reads the real tree from the source tree.
+  target_compile_definitions(test_guard_fallthrough PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
+  )
+
+  target_link_libraries(test_guard_fallthrough
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+  )
+
+  # ---- test_manual_charge_guard ----
+  # ManualChargeGuard stops the mow when the operator puts the mower back on
+  # the dock mid-run. It is the first reader of IsCharging for which a
+  # TRANSIENT charger bit is a state transition (blade off, stop, CHARGING,
+  # wait, MOWING) rather than a no-op, so IsCharging gained an optional
+  # stable_for_sec debounce port. Pins that the port defaults to the raw bit
+  # (the other ten <IsCharging/> sites must not change), that the debounce
+  # rejects a ~100 ms undock blip and resets on any off sample, and - the
+  # subtle part - that the guard's INVERTED debounced condition still passes
+  # mowing through during the unsettled window. Structurally asserts the tree
+  # keeps the debounced entry, the raw exit and the documented 24 h bound.
+  ament_add_gtest(test_manual_charge_guard
+    test/test_manual_charge_guard.cpp
+    src/condition_nodes.cpp
+  )
+
+  target_include_directories(test_manual_charge_guard PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # The structural half reads the real tree from the source tree.
+  target_compile_definitions(test_manual_charge_guard PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
+  )
+
+  target_link_libraries(test_manual_charge_guard
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+  )
+
+  # ---- test_high_level_status_snapshot ----
+  # Regression for the frozen GUI gauges: behavior_tree_node's 1 Hz republish
+  # timer used to re-send the CACHED HighLevelStatus verbatim, so every live
+  # field stalled while the tree sat in a transition-free branch (battery pinned
+  # for the whole low-battery charge hold; mowing progress pinned for the whole
+  # FollowStrip). Pins the tree-owned vs live-field split.
+  ament_add_gtest(test_high_level_status_snapshot
+    test/test_high_level_status_snapshot.cpp
+    src/status_snapshot.cpp
+  )
+
+  target_include_directories(test_high_level_status_snapshot PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  target_link_libraries(test_high_level_status_snapshot
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+  )
+
+  # ---- test_battery_filter ----
+  # Regression for the premature LOW_BATTERY_DOCKING trip: battery_percent used
+  # to be interpolated off the RAW rail voltage, so a sub-second motor sag
+  # (PWM startup / stiction, 0.5-1 V) crossed battery_low_percent at a genuine
+  # 30-40 % SoC. Pins that a brief sag does not trip while a real discharge
+  # still does, that the smoothing is rate-independent (4 Hz robot vs 10 Hz
+  # sim), and that an invalid reading never becomes a 0 % gauge.
+  # Pure logic — no ROS, so no ament_target_dependencies needed.
+  ament_add_gtest(test_battery_filter
+    test/test_battery_filter.cpp
+    src/battery_filter.cpp
+  )
+
+  target_include_directories(test_battery_filter PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # Pure dock-alignment math (header-only): the along/cross-track decomposition
+  # logged at claimed contact, and the per-undock dock_pose_yaw drift check.
+  ament_add_gtest(test_dock_alignment
+    test/test_dock_alignment.cpp
+  )
+
+  target_include_directories(test_dock_alignment PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # ---- test_dock_motion_gate ----
+  # Structural guard over the real main_tree.xml: a DockRobot must never be
+  # entered while the last published high-level state is IDLE. The firmware
+  # turns HL_MODE_IDLE into a per-cycle wheel hard stop (cpp_main.cpp
+  # motors_handler), so a dock transit started in IDLE can never move and
+  # DockRobot never returns. Needs no ROS deps - it only reads the tree.
+  ament_add_gtest(test_dock_motion_gate
+    test/test_dock_motion_gate.cpp
+  )
+
+  target_compile_definitions(test_dock_motion_gate PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
+  )
+
+  # ---- test_dig_obstruction_recovery ----
+  # Structural: HOME drops the dig keepouts under the robot (gated on
+  # IsDigEscalated) before its DockRobot; the DIG_OBSTRUCTION hold publishes
+  # state=1 so the firmware hard stop holds the wedged robot.
+  ament_add_gtest(test_dig_obstruction_recovery
+    test/test_dig_obstruction_recovery.cpp
+  )
+
+  target_compile_definitions(test_dig_obstruction_recovery PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
   )
 
 endif()

@@ -18,6 +18,7 @@ import {useAutoNotifications} from "../hooks/useNotificationCenter.tsx";
 import {useHighLevelStatus} from "../hooks/useHighLevelStatus.ts";
 import {useEmergency} from "../hooks/useEmergency.ts";
 import {useStatus} from "../hooks/useStatus.ts";
+import {useHostUpdater} from "../hooks/useHostUpdater";
 import {useIsMobile} from "../hooks/useIsMobile";
 import {useThemeMode} from "../theme/ThemeContext.tsx";
 import {BRAND_GRADIENT} from "../theme/colors.ts";
@@ -28,9 +29,9 @@ import "../concept/concept.css";
 /**
  * Premium tech-garden shell shared by the whole app.
  *
- * Desktop -> 88px fixed glass side-rail on the left + the page content in a
+ * Desktop -> 88px fixed side-rail on the left + the page content in a
  *            comfortable max-width column with a sticky top status strip.
- * Mobile   -> glass bottom-nav with a sliding lime pill + slim top header.
+ * Mobile   -> bottom-nav with a sliding lime pill + slim top header.
  *
  * All surfaces inherit the /concept tokens (data-concept scope on body).
  */
@@ -133,19 +134,20 @@ export function AppShell() {
     return (
       <div data-concept style={{
         display: 'flex', flexDirection: 'column',
-        height: '100%', background: colors.bgBase, overflow: 'hidden',
+        // The frame never scrolls; only main does. Unlike hidden, clip also
+        // prevents focused selects from shifting this frame horizontally.
+        height: '100%', background: colors.bgBase, overflow: 'clip',
       }}>
         <style>{KEYFRAMES_CSS}</style>
         <AuroraBackdrop/>
         <LiveStatusStrip/>
 
         <header style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '0 16px',
+          display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
+          padding: '0 16px 6px',
           paddingTop: 'max(env(safe-area-inset-top, 0px), 6px)',
           minHeight: 56,
-          background: 'rgba(2, 17, 13, 0.6)',
-          backdropFilter: 'blur(20px) saturate(140%)',
+          background: 'rgba(2, 17, 13, 0.94)',
           borderBottom: `1px solid ${colors.borderSubtle}`,
           flexShrink: 0,
           position: 'relative', zIndex: 10,
@@ -166,13 +168,13 @@ export function AppShell() {
           <div style={{display: 'flex', alignItems: 'center', gap: 6}}>
             <LanguageSwitcher/>
             <NotificationBell/>
-            <MowerStatus/>
           </div>
+          <div style={{width:'100%', display:'flex', justifyContent:'flex-end', marginTop:4}}><MowerStatus/></div>
         </header>
 
         <main style={{
           flex: 1, overflow: 'auto', minHeight: 0,
-          padding: '12px 14px 110px',
+          padding: '12px 14px calc(110px + env(safe-area-inset-bottom, 0px))',
           position: 'relative', zIndex: 1,
         }}>
           <AnimatedOutlet currentPath={currentPath}/>
@@ -226,8 +228,7 @@ export function AppShell() {
         <header style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '18px 32px',
-          background: 'rgba(2, 17, 13, 0.45)',
-          backdropFilter: 'blur(20px) saturate(140%)',
+          background: 'rgba(2, 17, 13, 0.94)',
           borderBottom: `1px solid ${colors.borderSubtle}`,
           position: 'sticky', top: 0, zIndex: 30, overflow: 'visible',
         }}>
@@ -284,6 +285,10 @@ function AnimatedOutlet({currentPath}: {currentPath: string}) {
   // useOutlet() the element is captured per render/location, so the cached
   // exiting div keeps the OLD page and the freshly keyed div gets the new one.
   const outlet = useOutlet();
+  // Scrolling pages must grow with their content so main's bottom padding
+  // follows the final control instead of sitting behind overflowing children.
+  // Map and logs own their viewport layout and still need a definite height.
+  const fillViewport = currentPath === '/map' || currentPath === '/logs';
   return (
     <AnimatePresence mode="wait">
       <motion.div
@@ -292,7 +297,7 @@ function AnimatedOutlet({currentPath}: {currentPath: string}) {
         animate={{opacity: 1, y: 0}}
         exit={{opacity: 0, y: -6}}
         transition={{duration: 0.28, ease: [0.2, 0.7, 0.2, 1]}}
-        style={{height: '100%'}}
+        style={{minHeight: '100%', height: fillViewport ? '100%' : undefined}}
       >
         {outlet}
       </motion.div>
@@ -311,6 +316,7 @@ interface RailProps {
 
 function DesktopSideRail({items, activePath, onNavigate}: RailProps) {
   const {t} = useTranslation();
+  const navigate = useNavigate();
   return (
     <aside style={{
       position: 'fixed', top: 0, bottom: 0, left: 0, width: 88,
@@ -318,7 +324,6 @@ function DesktopSideRail({items, activePath, onNavigate}: RailProps) {
       paddingTop: 24, paddingBottom: 24,
       background: 'linear-gradient(180deg, rgba(2, 17, 13, 0.92), rgba(2, 17, 13, 0.84))',
       borderRight: '1px solid rgba(236, 255, 244, 0.07)',
-      backdropFilter: 'blur(22px) saturate(140%)',
       zIndex: 40,
     }}>
       <div style={{
@@ -388,8 +393,27 @@ function DesktopSideRail({items, activePath, onNavigate}: RailProps) {
           })}
         </nav>
       </LayoutGroup>
+      <RunningVersionSummary onClick={() => void navigate('/settings?section=updates')}/>
     </aside>
   );
+}
+
+// The footer describes the verified running release, never the update target.
+function RunningVersionSummary({onClick, mobile = false}: {onClick: () => void; mobile?: boolean}) {
+  const {t} = useTranslation();
+  const {data, error} = useHostUpdater();
+  const active = data?.state.active;
+  const matched = !error && data?.runtime?.identity === 'matched' && active;
+  const version = matched ? (active.source.track === 'stable' ? active.release_tag || active.id : active.revision.slice(0, 8))
+    : t(!error && ['mixed', 'custom', 'drifted'].includes(data?.runtime?.identity ?? '') ? 'hostUpdater.summaryCustom' : 'hostUpdater.summaryUnknown');
+  const track = matched ? (active.source.track === 'custom' ? active.source.branch : t(`hostUpdater.tracks.${active.source.track}`)) : t('hostUpdater.installed');
+  const description = t('hostUpdater.runningSummary', {version, track});
+  return <button data-testid="running-version-summary" onClick={onClick} aria-label={description} title={description} style={{
+    display:'flex', flexDirection:mobile ? 'row' : 'column', alignItems:'center', justifyContent:'center', gap:5,
+    margin:mobile ? 0 : '12px 8px 0', padding:'12px 2px', minHeight:48, gridColumn:'1 / -1',
+    background:'transparent', border:'none', borderTop:'1px solid rgba(236,255,244,0.1)',
+    color:'#7CFFB2', cursor:'pointer', overflowWrap:'anywhere',
+  }}><span style={{fontSize:12, fontWeight:700}}>{version}</span><span style={{fontSize:10, color:'rgba(236,255,244,0.62)'}}>{track}</span></button>;
 }
 
 // ─── Mobile bottom nav ───
@@ -423,6 +447,7 @@ const bottomNavPill = (
 
 function MobileBottomNav({items, activePath, onNavigate, onMore, moreActive}: RailProps) {
   const {t} = useTranslation();
+  const {displayMode} = useThemeMode();
   const columns = items.length + (onMore ? 1 : 0);
   return (
     <nav style={{
@@ -431,7 +456,8 @@ function MobileBottomNav({items, activePath, onNavigate, onMore, moreActive}: Ra
       paddingTop: 10,
       paddingLeft: 14, paddingRight: 14,
       background: 'linear-gradient(180deg, rgba(2, 17, 13, 0) 0%, rgba(2, 17, 13, 0.85) 30%, rgba(2, 17, 13, 0.97) 100%)',
-      backdropFilter: 'blur(22px) saturate(140%)',
+      backdropFilter: displayMode === 'visual' ? 'blur(22px) saturate(140%)' : undefined,
+      WebkitBackdropFilter: displayMode === 'visual' ? 'blur(22px) saturate(140%)' : undefined,
       zIndex: 50,
     }}>
       <LayoutGroup>
@@ -442,7 +468,8 @@ function MobileBottomNav({items, activePath, onNavigate, onMore, moreActive}: Ra
           background: 'rgba(255, 255, 255, 0.04)',
           border: '1px solid rgba(236, 255, 244, 0.08)',
           borderRadius: 999,
-          backdropFilter: 'blur(28px)',
+          backdropFilter: displayMode === 'visual' ? 'blur(28px)' : undefined,
+          WebkitBackdropFilter: displayMode === 'visual' ? 'blur(28px)' : undefined,
         }}>
           {items.map(({key, labelKey, shortLabelKey, icon: Icon}) => {
             const isActive = key === activePath;
@@ -478,6 +505,8 @@ interface MoreSheetProps {
 
 function MobileMoreSheet({open, items, activePath, onClose, onNavigate}: MoreSheetProps) {
   const {t} = useTranslation();
+  const navigate = useNavigate();
+  const {displayMode} = useThemeMode();
 
   // Escape closes the sheet (keyboard parity with the backdrop tap / X button).
   useEffect(() => {
@@ -505,7 +534,8 @@ function MobileMoreSheet({open, items, activePath, onClose, onNavigate}: MoreShe
               position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 61,
               padding: '14px 14px calc(env(safe-area-inset-bottom, 0px) + 18px)',
               background: 'rgba(6, 24, 18, 0.97)',
-              backdropFilter: 'blur(24px) saturate(140%)',
+              backdropFilter: displayMode === 'visual' ? 'blur(24px) saturate(140%)' : undefined,
+              WebkitBackdropFilter: displayMode === 'visual' ? 'blur(24px) saturate(140%)' : undefined,
               borderTop: '1px solid rgba(236, 255, 244, 0.1)',
               borderRadius: '20px 20px 0 0',
             }}
@@ -536,6 +566,8 @@ function MobileMoreSheet({open, items, activePath, onClose, onNavigate}: MoreShe
                   </button>
                 );
               })}
+              <RunningVersionSummary mobile onClick={() => { onClose(); void navigate('/settings?section=updates'); }}/>
+
             </div>
           </motion.div>
         </>

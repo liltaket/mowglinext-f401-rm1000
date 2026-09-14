@@ -6,33 +6,14 @@ import {useGnssStatus} from "../hooks/useGnssStatus.ts";
 import {useSettings} from "../hooks/useSettings.ts";
 import {computeBatteryPercent} from "../utils/battery.ts";
 import {deriveGpsStatus} from "../utils/gpsStatus.ts";
-import {restartMowgliNext} from "../utils/containers.ts";
-import {useContainerRestart} from "../hooks/useContainerRestart.ts";
+import {PowerMenu} from "./PowerMenu.tsx";
 import {useMowerAction} from "./MowerActions.tsx";
-import {App, Badge, Button, Dropdown, Modal, Space, Tooltip, Typography} from "antd";
-import {PoweroffOutlined, ReloadOutlined, DesktopOutlined, WifiOutlined, AlertOutlined} from "@ant-design/icons"
+import {Badge, Button, Space, Tooltip, Typography} from "antd";
+import {PoweroffOutlined, WifiOutlined, AlertOutlined} from "@ant-design/icons"
 import {stateRenderer} from "./utils.tsx";
 import {useThemeMode} from "../theme/ThemeContext.tsx";
-import {useApi} from "../hooks/useApi.ts";
-import {limeAlpha} from "../theme/colors.ts";
-import {SettingOutlined} from "@ant-design/icons";
-import type {MenuProps} from "antd";
+import type {CSSProperties} from "react";
 import {useTranslation} from "react-i18next";
-
-// Builds the badge pulse keyframes from brand tokens. Green pulse derives
-// from the lime hero accent; red pulse derives from colors.danger (rose).
-// colors.danger is a hex string ("#FF6B7A"); append an 8-bit alpha suffix
-// to get the translucent stops without hardcoding the rose RGB here.
-const buildPulseKeyframes = (dangerHex: string) => `
-@keyframes mowerPulseGreen {
-    0%, 100% { box-shadow: 0 0 0 0 ${limeAlpha(0.6)}; }
-    50% { box-shadow: 0 0 0 4px ${limeAlpha(0)}; }
-}
-@keyframes mowerPulseRed {
-    0%, 100% { box-shadow: 0 0 0 0 ${dangerHex}99; }
-    50% { box-shadow: 0 0 0 4px ${dangerHex}00; }
-}
-`;
 
 // Colour by the NUMERIC high-level state (status_nodes.cpp publishes it every
 // tick): 2=AUTONOMOUS / 3=RECORDING / 4=MANUAL_MOWING are active (primary);
@@ -49,16 +30,13 @@ const statusColor = (stateNum: number | undefined, isEmergency: boolean, colors:
 
 export const MowerStatus = () => {
     const {t} = useTranslation();
-    const {colors} = useThemeMode();
-    const pulseKeyframes = buildPulseKeyframes(colors.danger);
+    const {colors, displayMode} = useThemeMode();
     const {highLevelStatus} = useHighLevelStatus();
     const hwStatus = useStatus();
     const emergencyData = useEmergency();
     const power = usePower();
     const gnss = useGnssStatus();
     const {settings} = useSettings();
-    const guiApi = useApi();
-    const {notification} = App.useApp();
 
     // Derive state with fallbacks
     const isEmergency = highLevelStatus.emergency ?? emergencyData.active_emergency ?? false;
@@ -88,11 +66,11 @@ export const MowerStatus = () => {
 
     const isMowing = stateNum === 2 || stateNum === 3 || stateNum === 4;
 
+    // The colour remains a continuous state cue. Emergency emphasis always
+    // pulses; Visual mode can additionally use a restrained active-state cue.
     const pulseAnimation = isEmergency
         ? 'mowerPulseRed 1.5s ease-in-out infinite'
-        : isMowing
-            ? 'mowerPulseGreen 2s ease-in-out infinite'
-            : 'none';
+        : isMowing && displayMode === 'visual' ? 'mowerPulseGreen 2.4s ease-in-out infinite' : 'none';
 
     const hasArea = highLevelStatus.current_area !== undefined && highLevelStatus.current_area >= 0;
     // Coarse sub-path X/Y — the secondary readout.
@@ -107,19 +85,10 @@ export const MowerStatus = () => {
     // Prefer the smooth coverage_percent; fall back to the coarse swath ratio
     // when it is 0/unset (e.g. at pass start or an older backend).
     const progressPercent = hasCoveragePercent
-        ? Math.round(coveragePercent as number)
+        ? Math.round(coveragePercent)
         : hasSwaths
             ? Math.round((completedSwaths / totalSwaths) * 100)
             : null;
-
-    // Long-running: container restart + rosbridge reconnect. Lock the menu
-    // item until ROS2 is reachable again to prevent duplicate-click storms.
-    const mowgliRestart = useContainerRestart({
-        pendingLabel: t('mowerStatus.restartingMowgli'),
-        successMessage: t('mowerStatus.mowgliRestarted'),
-        errorMessage: t('mowerStatus.mowgliRestartFailed'),
-    });
-    const restartMowgli = () => mowgliRestart.run(() => restartMowgliNext(guiApi));
 
     // Latched-emergency reset: firmware is the safety authority and only
     // clears the latch when the physical trigger is no longer asserted, so
@@ -128,90 +97,21 @@ export const MowerStatus = () => {
     // dashboard hero card to clear it (issue #149).
     const mowerAction = useMowerAction();
     const resetEmergencyAction = mowerAction("emergency", {Emergency: 0});
-    const rebootBoardAction = mowerAction("reboot_board", {});
     const showResetEmergency =
         emergencyData.active_emergency || emergencyData.latched_emergency || isEmergency;
 
-    const rebootSystem = async () => {
-        try {
-            await guiApi.request({path: "/system/reboot", method: "POST"});
-            notification.success({message: t('mowerStatus.restarting')});
-        } catch (e: any) {
-            notification.error({message: t('mowerStatus.restartFailed'), description: e.message});
-        }
-    };
-
-    const shutdownSystem = async () => {
-        try {
-            await guiApi.request({path: "/system/shutdown", method: "POST"});
-            notification.success({message: t('mowerStatus.shuttingDown')});
-        } catch (e: any) {
-            notification.error({message: t('mowerStatus.shutdownFailed'), description: e.message});
-        }
-    };
-
-    const confirmAction = (title: string, content: string, onOk: () => Promise<void>) => {
-        Modal.confirm({
-            title,
-            content,
-            okText: t('mowerStatus.confirm'),
-            okType: "danger",
-            cancelText: t('mowerStatus.cancel'),
-            onOk,
-        });
-    };
-
-    // Beginner-safe items at the top; destructive system/hardware actions
-    // (board reset, Pi reboot, shutdown) are tucked into an "Avancé"
-    // submenu so they're not hit by accident. Command logic unchanged.
-    const powerMenuItems: MenuProps["items"] = [
-        {
-            key: "restart-mowgli",
-            icon: <ReloadOutlined/>,
-            label: mowgliRestart.pending ? mowgliRestart.pendingLabel : t('mowerStatus.restartMowgli'),
-            disabled: mowgliRestart.pending,
-            onClick: () => confirmAction(t('mowerStatus.restartMowgli'), t('mowerStatus.restartMowgliConfirm'), restartMowgli),
-        },
-        {type: "divider"},
-        {
-            key: "advanced",
-            icon: <SettingOutlined/>,
-            label: t('mowerStatus.advanced'),
-            children: [
-                {
-                    key: "reboot-board",
-                    icon: <ReloadOutlined/>,
-                    label: t('mowerStatus.restartBoard'),
-                    onClick: () => confirmAction(
-                        t('mowerStatus.restartBoard'),
-                        t('mowerStatus.restartBoardConfirm'),
-                        rebootBoardAction),
-                },
-                {
-                    key: "reboot",
-                    icon: <DesktopOutlined/>,
-                    label: t('mowerStatus.restartPi'),
-                    onClick: () => confirmAction(t('mowerStatus.restartPi'), t('mowerStatus.restartPiConfirm'), rebootSystem),
-                },
-                {
-                    key: "shutdown",
-                    icon: <PoweroffOutlined/>,
-                    label: t('mowerStatus.shutdownPi'),
-                    danger: true,
-                    onClick: () => confirmAction(t('mowerStatus.shutdownPi'), t('mowerStatus.shutdownPiConfirm'), shutdownSystem),
-                },
-            ],
-        },
-    ];
-
     return (
         <>
-            <style>{pulseKeyframes}</style>
             <Space size="small" style={{flexShrink: 0}}>
                 <Space size={4}>
                     <Badge
                         color={statusColor(stateNum, isEmergency, colors)}
-                        style={{animation: pulseAnimation, borderRadius: '50%'}}
+                        style={{
+                            animation: pulseAnimation,
+                            borderRadius: '50%',
+                            '--mower-status-danger': colors.danger,
+                            '--mower-status-active': colors.primary,
+                        } as CSSProperties}
                     />
                     <Typography.Text style={{fontSize: 12, color: colors.text, whiteSpace: 'nowrap'}}>
                         {stateRenderer(stateName)}
@@ -244,7 +144,7 @@ export const MowerStatus = () => {
                         </Button>
                     </Tooltip>
                 )}
-                <Dropdown menu={{items: powerMenuItems}} trigger={["click"]} placement="bottomRight">
+                <PowerMenu>
                     {/* Real button (not a Space div) so the power menu is
                         keyboard-focusable/activatable. type="text" keeps the
                         chromeless icon+text look. */}
@@ -264,7 +164,7 @@ export const MowerStatus = () => {
                             </Typography.Text>
                         </Space>
                     </Button>
-                </Dropdown>
+                </PowerMenu>
             </Space>
         </>
     );

@@ -7,7 +7,6 @@ import {
     LaserScan,
     Map as MapType,
     ObstacleArray,
-    OccupancyGrid,
     Path,
     TrackedObstacle,
 } from "../../../types/ros.ts";
@@ -21,39 +20,14 @@ import {
 } from "../../../types/map.ts";
 import { drawLine, drawRobotSilhouette, transpose } from "../../../utils/map.tsx";
 import { rasterizeMowProgress } from "../../../utils/mowProgress.ts";
+import { rasterizeLidarMap } from "../../../utils/lidarMap.ts";
+import { GridImage, useGridImageStream } from "./useGridImageStream.ts";
 import { useRobotDescription } from "../../../hooks/useRobotDescription.ts";
+import {useLatestThrottle} from "./useLatestThrottle.ts";
+import {useThemeMode} from "../../../theme/ThemeContext.tsx";
+import {MAP_RENDER_BUDGETS} from "./mapRenderBudget.ts";
 
-export type MowProgressImage = {
-    url: string;
-    coordinates: [[number, number], [number, number], [number, number], [number, number]];
-};
-
-// Rasterize the mow-progress OccupancyGrid to a Mapbox image source. The heavy
-// per-cell pixel pass lives in the shared rasterizeMowProgress util (reused by
-// the dashboard mini-map); this only maps the resulting canvas to Mapbox
-// lon/lat corners. Invoked from a coalesced rAF, never on the WebSocket message
-// handler — so a burst of grids can't stall the pump.
-function renderMowProgress(
-    grid: OccupancyGrid,
-    offsetX: number,
-    offsetY: number,
-    datum: [number, number, number],
-    setImage: (v: MowProgressImage | null) => void,
-) {
-    const raster = rasterizeMowProgress(grid);
-    if (!raster) return;
-
-    const {originX, originY, resolution} = raster;
-    const gridWidth = raster.width * resolution;
-    const gridHeight = raster.height * resolution;
-    // Mapbox image source coords: [top-left, top-right, bottom-right, bottom-left].
-    const topLeft = transpose(offsetX, offsetY, datum, originY + gridHeight, originX);
-    const topRight = transpose(offsetX, offsetY, datum, originY + gridHeight, originX + gridWidth);
-    const bottomRight = transpose(offsetX, offsetY, datum, originY, originX + gridWidth);
-    const bottomLeft = transpose(offsetX, offsetY, datum, originY, originX);
-
-    setImage({url: raster.dataUrl, coordinates: [topLeft, topRight, bottomRight, bottomLeft]});
-}
+export type MowProgressImage = GridImage;
 
 interface UseMapStreamsOptions {
     editMap: boolean;
@@ -66,6 +40,11 @@ interface UseMapStreamsOptions {
     setMapKey: React.Dispatch<React.SetStateAction<string>>;
     mapInstanceRef: React.RefObject<MapboxMap | null>;
     robotPoseRef: React.RefObject<{ x: number; y: number; heading: number } | null>;
+}
+
+interface LidarRenderFrame {
+    scan: LaserScan;
+    pose: { x: number; y: number; heading: number };
 }
 
 export function useMapStreams({
@@ -95,10 +74,51 @@ export function useMapStreams({
     const joyStopTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
     const highLevelStatus = useHighLevelStatus();
+    const {displayMode} = useThemeMode();
+    const renderBudget = MAP_RENDER_BUDGETS[displayMode];
 
     // Robot geometry from the /robot_description URDF — single source of truth
     // for the on-map robot shape, so it matches the sensors-page model.
     const robot = useRobotDescription();
+
+    const poseRender = useLatestThrottle<AbsolutePose>((pose) => {
+        // position.x/y are optional on the wire. The old `?.x!` claimed
+        // otherwise and drew the robot at NaN on a malformed pose; drop the
+        // frame instead — the previous good pose stays on screen.
+        const posX = pose.pose?.pose?.position?.x;
+        const posY = pose.pose?.pose?.position?.y;
+        if (posX === undefined || posY === undefined) return;
+        const mower_lonlat = transpose(
+            offsetX,
+            offsetY,
+            datum,
+            posY,
+            posX
+        );
+        setFeatures((oldFeatures) => {
+            const orientation = pose.motion_heading ?? 0;
+            const line = drawLine(offsetX, offsetY, datum, posY, posX, orientation);
+            // URDF-derived robot silhouette (chassis + drive wheels + blade)
+            // so the map robot matches the sensors-page model exactly.
+            const sil = drawRobotSilhouette(
+                offsetX, offsetY, datum, posY, posX, orientation, robot
+            );
+            return {
+                ...oldFeatures,
+                mower: new MowerFeatureBase(mower_lonlat),
+                ["mower-footprint"]: new RobotPartFeature("mower-footprint", sil.chassis, "#00a6ff"),
+                ["mower-wheel-l"]: new RobotPartFeature("mower-wheel-l", sil.wheelL, "#0b2e3f"),
+                ["mower-wheel-r"]: new RobotPartFeature("mower-wheel-r", sil.wheelR, "#0b2e3f"),
+                ["mower-blade"]: new RobotPartFeature("mower-blade", sil.blade, "#ff6b6b"),
+                ["mower-heading"]: new LineFeatureBase(
+                    "mower-heading",
+                    [mower_lonlat, line],
+                    "#ff0000",
+                    "heading"
+                ),
+            };
+        });
+    }, renderBudget.poseIntervalMs);
 
     const poseStream = useWS<string>(
         () => {
@@ -107,43 +127,12 @@ export function useMapStreams({
         },
         (e) => {
             const pose = (e as any) as AbsolutePose;
-            const mower_lonlat = transpose(
-                offsetX,
-                offsetY,
-                datum,
-                pose.pose?.pose?.position?.y!!,
-                pose.pose?.pose?.position?.x!!
-            );
             robotPoseRef.current = {
                 x: pose.pose?.pose?.position?.x ?? 0,
                 y: pose.pose?.pose?.position?.y ?? 0,
                 heading: pose.motion_heading ?? 0,
             };
-            setFeatures((oldFeatures) => {
-                const orientation = pose.motion_heading!!;
-                const posX = pose.pose?.pose?.position?.x!!;
-                const posY = pose.pose?.pose?.position?.y!!;
-                const line = drawLine(offsetX, offsetY, datum, posY, posX, orientation);
-                // URDF-derived robot silhouette (chassis + drive wheels + blade)
-                // so the map robot matches the sensors-page model exactly.
-                const sil = drawRobotSilhouette(
-                    offsetX, offsetY, datum, posY, posX, orientation, robot
-                );
-                return {
-                    ...oldFeatures,
-                    mower: new MowerFeatureBase(mower_lonlat),
-                    ["mower-footprint"]: new RobotPartFeature("mower-footprint", sil.chassis, "#00a6ff"),
-                    ["mower-wheel-l"]: new RobotPartFeature("mower-wheel-l", sil.wheelL, "#0b2e3f"),
-                    ["mower-wheel-r"]: new RobotPartFeature("mower-wheel-r", sil.wheelR, "#0b2e3f"),
-                    ["mower-blade"]: new RobotPartFeature("mower-blade", sil.blade, "#ff6b6b"),
-                    ["mower-heading"]: new LineFeatureBase(
-                        "mower-heading",
-                        [mower_lonlat, line],
-                        "#ff0000",
-                        "heading"
-                    ),
-                };
-            });
+            poseRender.push(pose);
         }
     );
 
@@ -189,65 +178,84 @@ export function useMapStreams({
         () => {}
     );
 
+    // Mow-progress overlay and the LiDAR anchor map are both OccupancyGrids
+    // rasterized off the message handler (see useGridImageStream).
+    const mowProgress = useGridImageStream(rasterizeMowProgress, offsetX, offsetY, datum);
+    const lidarMap = useGridImageStream(rasterizeLidarMap, offsetX, offsetY, datum);
+    // Once fusion_graph publishes its LiDAR map the map REPLACES the raw scan
+    // points: the points are what the map is built from, and drawing both just
+    // hides the walls under a moving cloud. Ref, not state, so the WebSocket
+    // handler closure below never reads a stale value.
+    const lidarMapPresentRef = useRef(false);
+    useEffect(() => {
+        lidarMapPresentRef.current = lidarMap.image != null;
+        if (lidarMap.image != null) setLidarCollection({type: "FeatureCollection", features: []});
+    }, [lidarMap.image]);
+
+    const lidarRender = useLatestThrottle<LidarRenderFrame>(({scan, pose}) => {
+        if (!scan.ranges) return;
+
+        const rays: GeoJSON.Feature[] = [];
+        const angleMin = scan.angle_min ?? 0;
+        const angleInc = scan.angle_increment ?? 0;
+        const rangeMin = scan.range_min ?? 0;
+        const rangeMax = scan.range_max ?? 12;
+
+        // Scan rays live in the lidar_link frame, which is mounted on the
+        // chassis with a static base_footprint→lidar_link transform
+        // (lidar_x/y forward+lateral offset, lidar_yaw heading offset — see
+        // mowgli_robot.yaml). Compose that mount transform with the robot
+        // pose so points land at their true map position instead of being
+        // drawn as if the lidar sat at base_footprint with zero yaw.
+        const lidarX = parseFloat(settings["lidar_x"]) || 0;
+        const lidarY = parseFloat(settings["lidar_y"]) || 0;
+        const lidarYaw = parseFloat(settings["lidar_yaw"]) || 0;
+        const cosH = Math.cos(pose.heading);
+        const sinH = Math.sin(pose.heading);
+
+        // Downsample: take every Nth point for performance
+        const step = Math.max(1, Math.floor(scan.ranges.length / 90));
+        for (let i = 0; i < scan.ranges.length; i += step) {
+            const range = scan.ranges[i];
+            if (range < rangeMin || range > rangeMax) continue;
+
+            // Point in the lidar frame (lidar_yaw folded into the ray angle).
+            const angle = angleMin + i * angleInc + lidarYaw;
+            const px = range * Math.cos(angle);
+            const py = range * Math.sin(angle);
+            // lidar_link → base_footprint (rotate by lidar_yaw, translate by mount offset).
+            const bx = lidarX + px;
+            const by = lidarY + py;
+            // base_footprint → map (rotate by robot heading, translate by pose).
+            const endX = pose.x + bx * cosH - by * sinH;
+            const endY = pose.y + bx * sinH + by * cosH;
+            const endLonLat = transpose(offsetX, offsetY, datum, endY, endX);
+
+            rays.push({
+                type: "Feature",
+                properties: { intensity: range < rangeMax * 0.8 ? "hit" : "far" },
+                geometry: {
+                    type: "Point",
+                    coordinates: endLonLat,
+                },
+            });
+        }
+        setLidarCollection({
+            type: "FeatureCollection",
+            features: rays,
+        });
+    }, renderBudget.lidarIntervalMs);
+
     const lidarStream = useWS<string>(
         () => {
         },
         () => {
         },
         (e) => {
-            const scan = (e as any) as LaserScan;
+            if (lidarMapPresentRef.current) return;
             const pose = robotPoseRef.current;
-            if (!pose || !scan.ranges) return;
-
-            const rays: GeoJSON.Feature[] = [];
-            const angleMin = scan.angle_min ?? 0;
-            const angleInc = scan.angle_increment ?? 0;
-            const rangeMin = scan.range_min ?? 0;
-            const rangeMax = scan.range_max ?? 12;
-
-            // Scan rays live in the lidar_link frame, which is mounted on the
-            // chassis with a static base_footprint→lidar_link transform
-            // (lidar_x/y forward+lateral offset, lidar_yaw heading offset — see
-            // mowgli_robot.yaml). Compose that mount transform with the robot
-            // pose so points land at their true map position instead of being
-            // drawn as if the lidar sat at base_footprint with zero yaw.
-            const lidarX = parseFloat(settings["lidar_x"]) || 0;
-            const lidarY = parseFloat(settings["lidar_y"]) || 0;
-            const lidarYaw = parseFloat(settings["lidar_yaw"]) || 0;
-            const cosH = Math.cos(pose.heading);
-            const sinH = Math.sin(pose.heading);
-
-            // Downsample: take every Nth point for performance
-            const step = Math.max(1, Math.floor(scan.ranges.length / 90));
-            for (let i = 0; i < scan.ranges.length; i += step) {
-                const range = scan.ranges[i];
-                if (range < rangeMin || range > rangeMax) continue;
-
-                // Point in the lidar frame (lidar_yaw folded into the ray angle).
-                const angle = angleMin + i * angleInc + lidarYaw;
-                const px = range * Math.cos(angle);
-                const py = range * Math.sin(angle);
-                // lidar_link → base_footprint (rotate by lidar_yaw, translate by mount offset).
-                const bx = lidarX + px;
-                const by = lidarY + py;
-                // base_footprint → map (rotate by robot heading, translate by pose).
-                const endX = pose.x + bx * cosH - by * sinH;
-                const endY = pose.y + bx * sinH + by * cosH;
-                const endLonLat = transpose(offsetX, offsetY, datum, endY, endX);
-
-                rays.push({
-                    type: "Feature",
-                    properties: { intensity: range < rangeMax * 0.8 ? "hit" : "far" },
-                    geometry: {
-                        type: "Point",
-                        coordinates: endLonLat,
-                    },
-                });
-            }
-            setLidarCollection({
-                type: "FeatureCollection",
-                features: rays,
-            });
+            if (!pose) return;
+            lidarRender.push({scan: (e as any) as LaserScan, pose});
         }
     );
 
@@ -283,34 +291,6 @@ export function useMapStreams({
                         }
                     });
                     return newFeatures;
-                });
-            }
-        }
-    );
-
-    // Mow-progress overlay: the latest grid waits in a ref and is rasterized at
-    // most once per animation frame (the raster + toDataURL is too heavy to run
-    // on the WebSocket message handler — it would stall pose/lidar frames).
-    const [mowProgressImage, setMowProgressImage] = useState<MowProgressImage | null>(null);
-    const mowProgressPendingRef = React.useRef<
-        { grid: OccupancyGrid; offsetX: number; offsetY: number; datum: [number, number, number] } | null
-    >(null);
-    const mowProgressRafRef = React.useRef<number | null>(null);
-    const mowProgressStream = useWS<string>(
-        () => {},
-        () => {},
-        (e) => {
-            const grid = (e as any) as OccupancyGrid;
-            if (!grid.info || !grid.data) return;
-            if ((grid.info.width ?? 0) === 0 || (grid.info.height ?? 0) === 0) return;
-            mowProgressPendingRef.current = { grid, offsetX, offsetY, datum };
-            if (mowProgressRafRef.current == null) {
-                mowProgressRafRef.current = requestAnimationFrame(() => {
-                    mowProgressRafRef.current = null;
-                    const pending = mowProgressPendingRef.current;
-                    mowProgressPendingRef.current = null;
-                    if (!pending) return;
-                    renderMowProgress(pending.grid, pending.offsetX, pending.offsetY, pending.datum, setMowProgressImage);
                 });
             }
         }
@@ -367,6 +347,8 @@ export function useMapStreams({
             pathStream.stop();
             planStream.stop();
             lidarStream.stop();
+            poseRender.cancel();
+            lidarRender.cancel();
             obstaclesStream.stop();
             recordingTrajectoryStream.stop();
             highLevelStatus.stop();
@@ -387,7 +369,8 @@ export function useMapStreams({
             planStream.start("/api/mowglinext/subscribe/plan");
             lidarStream.start("/api/mowglinext/subscribe/lidar");
             obstaclesStream.start("/api/mowglinext/subscribe/obstacles");
-            mowProgressStream.start("/api/mowglinext/subscribe/mowProgress");
+            mowProgress.stream.start("/api/mowglinext/subscribe/mowProgress");
+            lidarMap.stream.start("/api/mowglinext/subscribe/lidarMap");
         }
     }, [editMap]);
 
@@ -452,7 +435,8 @@ export function useMapStreams({
         planStream.start("/api/mowglinext/subscribe/plan");
         lidarStream.start("/api/mowglinext/subscribe/lidar");
         obstaclesStream.start("/api/mowglinext/subscribe/obstacles");
-        mowProgressStream.start("/api/mowglinext/subscribe/mowProgress");
+        mowProgress.stream.start("/api/mowglinext/subscribe/mowProgress");
+            lidarMap.stream.start("/api/mowglinext/subscribe/lidarMap");
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [settings["datum_lon"], settings["datum_lat"]]);
 
@@ -465,12 +449,13 @@ export function useMapStreams({
             joyStream.stop();
             planStream.stop();
             lidarStream.stop();
+            poseRender.cancel();
+            lidarRender.cancel();
             obstaclesStream.stop();
-            mowProgressStream.stop();
-            if (mowProgressRafRef.current != null) {
-                cancelAnimationFrame(mowProgressRafRef.current);
-                mowProgressRafRef.current = null;
-            }
+            mowProgress.stream.stop();
+            mowProgress.cancel();
+            lidarMap.stream.stop();
+            lidarMap.cancel();
             recordingTrajectoryStream.stop();
             highLevelStatus.stop();
         };
@@ -483,7 +468,8 @@ export function useMapStreams({
         path,
         plan,
         lidarCollection,
-        mowProgressImage,
+        mowProgressImage: mowProgress.image,
+        lidarMapImage: lidarMap.image,
         highLevelStatus,
         joyStream,
     };
