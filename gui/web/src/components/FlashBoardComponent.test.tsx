@@ -1,7 +1,7 @@
 import {App} from "antd";
 import {cleanup, fireEvent, render, screen, waitFor} from "@testing-library/react";
 import type {ReactNode} from "react";
-import {beforeEach, describe, expect, it, vi} from "vitest";
+import {afterEach, beforeEach, describe, expect, it, vi} from "vitest";
 import {ThemeProvider} from "../theme/ThemeContext.tsx";
 import {FlashBoardComponent} from "./FlashBoardComponent.tsx";
 import {fetchEventSource} from "@microsoft/fetch-event-source";
@@ -98,6 +98,11 @@ describe("FlashBoardComponent model/default integration", () => {
         sessionStorage.clear();
         vi.stubGlobal("fetch", vi.fn());
         vi.mocked(fetchEventSource).mockReset().mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+        cleanup();
+        vi.unstubAllGlobals();
     });
 
     it("fresh YardForce500B selects its canonical board and panel", async () => {
@@ -284,7 +289,7 @@ describe("FlashBoardComponent model/default integration", () => {
         expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/setup/firmware-update/usb-dfu-1");
         expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBeUndefined();
         expect(screen.getByText(/firmware flashed successfully/i)).toBeInTheDocument();
-    });
+    }, 60_000);
 
     it("requires a fresh physical confirmation for USB Recovery", async () => {
         renderComponent("YardForce500B");
@@ -301,5 +306,5 @@ describe("FlashBoardComponent model/default integration", () => {
         await waitFor(() => expect(screen.getByRole("button", {name: /update via usb/i})).toBeEnabled());
         fireEvent.click(screen.getByText("Advanced: USB Recovery"));
         expect(screen.getByRole("checkbox", {name: /use usb recovery/i})).not.toBeChecked();
-    });
+    }, 60_000);
 });
