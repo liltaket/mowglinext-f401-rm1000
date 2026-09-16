@@ -433,6 +433,7 @@ export const enum StatusConstants {
   RESET_CAUSE_IWDG = 5,
   RESET_CAUSE_WWDG = 6,
   RESET_CAUSE_LPWR = 7,
+  FIRMWARE_CAP_USB_DFU = 1,
 };
 
 export type Status = {
@@ -461,6 +462,8 @@ export type Status = {
   firmware_version?: string;
   firmware_protocol_version?: number;
   firmware_compatible?: boolean;
+  firmware_capabilities?: number;
+  firmware_connection_generation?: number;
 };
 
 export const enum TrackedObstacleConstants {
