@@ -88,6 +88,13 @@ TEST_F(PathProgressGoalCheckerTest, NearEndReplayNeedsProgressBeforeProximityCom
   {
     EXPECT_FALSE(checker_.isGoalReached(replay_goal, replay_goal, {}, {})) << "tick " << tick;
   }
+  for (int tick = 0; tick < 20; ++tick)
+  {
+    auto jittered_goal = replay_goal;
+    jittered_goal.position.x += (tick % 2 == 0) ? 0.006 : -0.006;
+    EXPECT_FALSE(checker_.isGoalReached(jittered_goal, replay_goal, {}, {}))
+        << "endpoint correction " << tick;
+  }
 
   // On a fresh replay, actual forward motion is still required before normal
   // progress-gated completion can occur.

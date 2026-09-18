@@ -298,7 +298,15 @@ bool PathProgressGoalChecker::isGoalReached(const geometry_msgs::msg::Pose& quer
         best_idx = i;
       }
     }
-    if (best_idx > max_reached_index_)
+    // A query at the goal can be closest to this call's artificial search
+    // boundary even when the robot never traversed the intervening path. Do
+    // not turn that cap into progress; only the real final path index may be
+    // accepted at a window boundary. Normal ordered tracking finds interior
+    // matches until it genuinely reaches the final pose.
+    const size_t search_boundary = end_exclusive - 1;
+    const bool boundary_is_final_path_pose = (search_boundary == n - 1);
+    if (best_idx > max_reached_index_ &&
+        (best_idx != search_boundary || boundary_is_final_path_pose))
     {
       max_reached_index_ = best_idx;
     }
