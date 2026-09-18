@@ -141,6 +141,18 @@ float coveragePercentFromCursor(std::size_t absolute_cursor, std::size_t total_p
   return std::clamp(pct, 0.0f, 100.0f);
 }
 
+void recordInterruptedCoverageProgress(BTContext& ctx,
+                                       uint32_t area_idx,
+                                       std::size_t absolute_cursor,
+                                       std::size_t total_poses)
+{
+  // An interruption only proves how far the tracked cursor progressed. It does
+  // not prove the remaining path was physically traversed, even when the
+  // cursor is close to the end.
+  ctx.area_resume_pose_index[area_idx] = absolute_cursor;
+  ctx.coverage_percent = coveragePercentFromCursor(absolute_cursor, total_poses);
+}
+
 std::size_t forwardSkipIndex(const std::vector<geometry_msgs::msg::PoseStamped>& poses,
                              std::size_t from,
                              double skip_dist_m)
@@ -573,41 +585,7 @@ void FollowStrip::persistResumeCursor(const std::shared_ptr<BTContext>& ctx)
   // base offset + how far into that (possibly trimmed) unit we got.
   const std::size_t base = (swath_idx_ < swath_base_.size()) ? swath_base_[swath_idx_] : 0;
   const std::size_t absolute = base + resume_start_idx_ + path_progress_idx_;
-  const double pct = coveragePercentFromCursor(absolute, total_path_poses_);
-
-  // Near-complete acceptance. The coverage_goal_checker already treats
-  // >= 95 % monotonic path traversal as goal-reached; if a reactive guard
-  // (a phantom obstacle promotion, or a localization-drift boundary flicker at
-  // the outermost ring) halts FollowStrip AFTER that much of the path is driven,
-  // the area is effectively mowed. Re-dispatching it just re-plans and re-drives
-  // into the SAME edge trip — an infinite loop that never advances to GoHome.
-  // Instead, mark every swath of this area done so GetNextUnmowedArea retires it
-  // and the BT proceeds to the next area / dock.
-  constexpr double kAreaCompleteProgressPct = 95.0;
-  if (pct >= kAreaCompleteProgressPct)
-  {
-    for (std::size_t s = 0; s < swaths_.size(); ++s)
-    {
-      ctx->area_completed_swaths[area_idx_].insert(s);
-    }
-    ctx->completed_areas.insert(area_idx_);
-    ctx->area_resume_pose_index.erase(area_idx_);  // done — do not resume
-    ctx->coverage_percent = 100.0f;
-    RCLCPP_INFO(ctx->node->get_logger(),
-                "FollowStrip: area %u interrupted at pose %zu/%zu (%.0f%%) — >= %.0f%% driven, "
-                "accepting as MOWED (guard trip near field edge); advancing to GoHome/dock "
-                "instead of re-dispatching",
-                area_idx_,
-                absolute,
-                total_path_poses_,
-                pct,
-                kAreaCompleteProgressPct);
-    saveCoverageResumeState(*ctx);
-    return;
-  }
-
-  ctx->area_resume_pose_index[area_idx_] = absolute;
-  ctx->coverage_percent = static_cast<float>(pct);
+  recordInterruptedCoverageProgress(*ctx, area_idx_, absolute, total_path_poses_);
   RCLCPP_INFO(ctx->node->get_logger(),
               "FollowStrip: area %u interrupted at pose %zu/%zu (%.0f%%) — resume cursor saved",
               area_idx_,
@@ -1274,35 +1252,11 @@ BT::NodeStatus FollowStrip::onRunning()
       status == action_msgs::msg::GoalStatus::STATUS_CANCELED)
   {
     logSegmentTracking(ctx, "ended early");
-    // Progress WITHIN the current unit (resume_start_idx_ = trim offset,
-    // path_progress_idx_ = furthest pose reached in the trimmed unit) as a
-    // fraction of that unit's FULL length — so "near the end" is judged per unit,
-    // not against the whole concatenation (which would never fire on an early
-    // sub-path).
     const std::size_t unit_reached = resume_start_idx_ + path_progress_idx_;
     const std::size_t unit_full =
         resume_start_idx_ + (swath_idx_ < swaths_.size() ? swaths_[swath_idx_].poses.size() : 0);
     const double frac =
         unit_full > 0 ? static_cast<double>(unit_reached) / static_cast<double>(unit_full) : 0.0;
-    // Reached the end of the unit: FTC parks ~max_goal_distance_error short of
-    // the final pose, so the goal-checker can't fire and the progress_checker
-    // aborts (err 105) at ~100 % tracked. The unit IS mowed — treat it as
-    // COMPLETE (clear the resume cursor, record it done) instead of skipping it,
-    // which previously discarded the near-100 % cursor and re-mowed from scratch.
-    // See kPathCompleteFraction.
-    if (frac >= kPathCompleteFraction)
-    {
-      RCLCPP_INFO(ctx->node->get_logger(),
-                  "FollowStrip: segment %zu/%zu reached %.0f%% of path then aborted near the goal "
-                  "(area %u) — treating as MOWED (FTC parks short of the final pose)",
-                  swath_idx_ + 1,
-                  swaths_.size(),
-                  100.0 * frac,
-                  area_idx_);
-      markCurrentUnitMowed(ctx);
-      follow_handle_.reset();
-      return advance();
-    }
     // DETOUR-AND-CONTINUE: FTC likely aborted because it is blocked by an
     // obstacle it cannot skirt laterally. Rather than abandon the whole segment,
     // try to drive a BLADE-OFF transit around the obstacle to a clear pose

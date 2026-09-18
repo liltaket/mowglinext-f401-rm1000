@@ -37,6 +37,7 @@
 
 using mowgli_behavior::BTContext;
 using mowgli_behavior::coveragePercentFromCursor;
+using mowgli_behavior::recordInterruptedCoverageProgress;
 using mowgli_behavior::refreshSwathProgress;
 
 namespace
@@ -150,4 +151,28 @@ TEST(CoveragePercent, ClampsAtOneHundred)
 {
   EXPECT_FLOAT_EQ(coveragePercentFromCursor(1000, 1000), 100.0f);
   EXPECT_FLOAT_EQ(coveragePercentFromCursor(1005, 1000), 100.0f);
+}
+
+// An interruption must preserve a resumable cursor, not promote unverified
+// progress to completion. In particular, the historical >=95% shortcut must
+// not insert swaths/areas or publish 100% for 94%, 95%, or near-end progress.
+TEST(CoverageInterruption, NeverInfersCompletionFromNearEndCursor)
+{
+  constexpr std::size_t kTotal = 1000;
+  constexpr uint32_t kArea = 7;
+
+  for (const std::size_t cursor : {940u, 950u, 990u})
+  {
+    BTContext ctx;
+    ctx.area_completed_swaths[kArea] = {0};  // a genuinely completed earlier unit
+
+    recordInterruptedCoverageProgress(ctx, kArea, cursor, kTotal);
+
+    ASSERT_EQ(ctx.area_resume_pose_index.count(kArea), 1u);
+    EXPECT_EQ(ctx.area_resume_pose_index.at(kArea), cursor);
+    EXPECT_EQ(ctx.area_completed_swaths.at(kArea), (std::set<std::size_t>{0}));
+    EXPECT_TRUE(ctx.completed_areas.empty());
+    EXPECT_LT(ctx.coverage_percent, 100.0f);
+    EXPECT_FLOAT_EQ(ctx.coverage_percent, coveragePercentFromCursor(cursor, kTotal));
+  }
 }

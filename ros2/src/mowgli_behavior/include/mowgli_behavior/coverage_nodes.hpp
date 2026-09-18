@@ -147,6 +147,15 @@ void refreshSwathProgress(BTContext& ctx, uint32_t area_idx, std::size_t unit_co
 // ---------------------------------------------------------------------------
 float coveragePercentFromCursor(std::size_t absolute_cursor, std::size_t total_poses);
 
+// Record progress when a coverage execution is interrupted. This deliberately
+// does NOT alter completed swaths or completed areas; completion is decided by
+// the terminal path-handling logic. Kept separate from disk I/O so the
+// invariant is regression-testable without ROS action servers.
+void recordInterruptedCoverageProgress(BTContext& ctx,
+                                       uint32_t area_idx,
+                                       std::size_t absolute_cursor,
+                                       std::size_t total_poses);
+
 // ---------------------------------------------------------------------------
 // forwardSkipIndex — smallest index > `from` whose cumulative path arc-length
 // from poses[from] is at least `skip_dist_m`, bounded to poses.size()-1. Returns
@@ -523,16 +532,9 @@ private:
   bool goal_sent_ = false;
   bool follow_goal_ever_sent_ = false;
 
-  // A FollowCoveragePath goal that ABORTS at or beyond this fraction of the
-  // path is treated as COMPLETE rather than skipped. FTC zeroes linear.x once
-  // it leaves FOLLOWING and parks up to max_goal_distance_error (~0.5 m) short
-  // of the final pose; the PathProgressGoalChecker then can't fire (robot
-  // stopped just outside xy tolerance) and the progress_checker aborts the goal
-  // with err 105 at ~100 % tracked. Without this, that abort was scored as a
-  // skip, the near-100 % resume cursor was discarded (resume+2 >= size), the
-  // area was never marked complete, and GetNextUnmowedArea re-mowed it from
-  // scratch — an endless re-mow loop. Matches the goal-checker progress_threshold
-  // (0.95): reaching >=95 % of poses means the area is mowed.
+  // This threshold applies only while handling a dig-truncated goal: reaching
+  // the truncation point lets the unit continue past that dig zone. It is never
+  // evidence that an interrupted coverage unit or area is complete.
   static constexpr double kPathCompleteFraction = 0.95;
 };
 
