@@ -96,9 +96,9 @@ ResumeLocation resolveResumeLocation(const std::vector<nav_msgs::msg::Path>& uni
                                      std::size_t total_poses)
 {
   ResumeLocation loc;
-  // A cursor at 0 (never interrupted) or within 2 poses of the very end (whole
-  // path effectively done) is not worth resuming — mow fresh from the start.
-  if (cursor == 0 || cursor + 2 >= total_poses)
+  // A cursor at 0 was never interrupted. A cursor at/past the end cannot name
+  // a pose in this plan. Neither is resumable.
+  if (cursor == 0 || cursor >= total_poses)
   {
     return loc;
   }
@@ -115,9 +115,18 @@ ResumeLocation resolveResumeLocation(const std::vector<nav_msgs::msg::Path>& uni
   }
   loc.valid = true;
   loc.unit = k;
-  // Only trim mid-unit when the landing offset is strictly interior; otherwise
-  // snap to the unit's front (a near-boundary trim would leave a 1-2 pose stub).
-  loc.local = (local > 0 && local + 2 < units[k].poses.size()) ? local : 0;
+  if (local == 0)
+  {
+    return loc;  // exact unit boundary → its front
+  }
+
+  // Interruption is not completion. A one/two-pose tail is too small for a
+  // useful FollowPath, so replay a bounded three-pose suffix instead of
+  // discarding the cursor and re-mowing the full area.
+  constexpr std::size_t kMinResumeTailPoses = 3;
+  const std::size_t replay_from =
+      units[k].poses.size() > kMinResumeTailPoses ? units[k].poses.size() - kMinResumeTailPoses : 0;
+  loc.local = std::min(local, replay_from);
   return loc;
 }
 

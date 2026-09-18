@@ -66,13 +66,21 @@ TEST(ResolveResumeLocation, ZeroCursorIsFreshStart)
   EXPECT_FALSE(rl.valid);
 }
 
-// A cursor within 2 poses of the very end means the path is effectively done —
-// not worth resuming.
-TEST(ResolveResumeLocation, NearEndCursorIsFreshStart)
+// Near-end interruption is not completion. Replay a small suffix so the next
+// FollowPath has enough poses, rather than discarding the cursor and mowing the
+// full area again.
+TEST(ResolveResumeLocation, NearEndCursorReplaysTail)
 {
   const std::vector<nav_msgs::msg::Path> units{makeUnit(100)};
-  EXPECT_FALSE(resolveResumeLocation(units, 98, 100).valid);  // 98 + 2 >= 100
-  EXPECT_FALSE(resolveResumeLocation(units, 99, 100).valid);
+  const auto at_98 = resolveResumeLocation(units, 98, 100);
+  ASSERT_TRUE(at_98.valid);
+  EXPECT_EQ(at_98.unit, 0u);
+  EXPECT_EQ(at_98.local, 97u);  // replay poses 97, 98, 99
+
+  const auto at_99 = resolveResumeLocation(units, 99, 100);
+  ASSERT_TRUE(at_99.valid);
+  EXPECT_EQ(at_99.unit, 0u);
+  EXPECT_EQ(at_99.local, 97u);
 }
 
 // The reproduction from the field logs: one big first sub-path, cursor at 216 →
@@ -110,15 +118,15 @@ TEST(ResolveResumeLocation, UnitBoundarySnapsToFront)
   EXPECT_EQ(rl.local, 0u);  // front of unit 1, no trim
 }
 
-// A near-boundary landing (within 2 poses of a unit's end) snaps to the front
-// rather than leaving a 1-2 pose stub.
-TEST(ResolveResumeLocation, NearUnitEndSnapsToFront)
+// A near-boundary landing replays the small suffix rather than leaving a 1-2
+// pose stub or discarding progress.
+TEST(ResolveResumeLocation, NearUnitEndReplaysTail)
 {
   const std::vector<nav_msgs::msg::Path> units{makeUnit(100), makeUnit(100)};
   const auto rl = resolveResumeLocation(units, 99, 200);  // local 99, 99 + 2 >= 100
   ASSERT_TRUE(rl.valid);
   EXPECT_EQ(rl.unit, 0u);
-  EXPECT_EQ(rl.local, 0u);
+  EXPECT_EQ(rl.local, 97u);
 }
 
 // A cursor past the end of the concatenation (stale / mismatched plan) is not

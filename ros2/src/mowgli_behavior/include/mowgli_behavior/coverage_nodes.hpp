@@ -113,10 +113,10 @@ struct ResumeLocation
 
 /// Map an absolute resume cursor (index into the sub-path concatenation) to the
 /// sub-path unit and local offset at which mowing resumes. Applies the guards
-/// FollowStrip uses: a cursor of 0 (or within 2 poses of the very end) is not
-/// resumable, and a landing offset is only trimmed mid-unit when it is strictly
-/// interior (local > 0 and at least 2 poses before the unit end) — otherwise the
-/// resume snaps to the unit's front. `total_poses` is the sum of unit sizes.
+/// FollowStrip uses: a cursor of 0 or past the end is not resumable. A cursor
+/// near the end replays a short suffix rather than inferring completion; a
+/// landing at a unit boundary resumes at that next unit's front.
+/// `total_poses` is the sum of unit sizes.
 ResumeLocation resolveResumeLocation(const std::vector<nav_msgs::msg::Path>& units,
                                      std::size_t cursor,
                                      std::size_t total_poses);
