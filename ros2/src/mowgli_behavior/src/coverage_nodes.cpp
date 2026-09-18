@@ -25,6 +25,7 @@
 #include "action_msgs/msg/goal_status.hpp"
 #include "mowgli_behavior/coverage_persistence.hpp"
 #include "mowgli_behavior/unit_resume.hpp"
+#include "mowgli_interfaces/coverage_path_invariants.hpp"
 #include "tf2/exceptions.hpp"
 
 namespace mowgli_behavior
@@ -120,10 +121,10 @@ ResumeLocation resolveResumeLocation(const std::vector<nav_msgs::msg::Path>& uni
     return loc;  // exact unit boundary → its front
   }
 
-  // Interruption is not completion. A one/two-pose tail is too small for a
-  // useful FollowPath, so replay a bounded three-pose suffix instead of
-  // discarding the cursor and re-mowing the full area.
-  constexpr std::size_t kMinResumeTailPoses = 3;
+  // Interruption is not completion. This must remain longer than the coverage
+  // goal checker's proximity-only short-path exception: otherwise an aborted
+  // near-end resume can immediately succeed without traversing its replay.
+  constexpr std::size_t kMinResumeTailPoses = mowgli_interfaces::kCoverageResumeReplayPoses;
   const std::size_t replay_from =
       units[k].poses.size() > kMinResumeTailPoses ? units[k].poses.size() - kMinResumeTailPoses : 0;
   loc.local = std::min(local, replay_from);

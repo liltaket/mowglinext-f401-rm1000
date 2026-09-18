@@ -67,6 +67,38 @@ TEST_F(PathProgressGoalCheckerTest, GoalProximityDoesNotSkipFullPath)
   EXPECT_FALSE(checker_.isGoalXYReached(goal_, goal_, {}, local));
 }
 
+TEST_F(PathProgressGoalCheckerTest, NearEndReplayNeedsProgressBeforeProximityCompletes)
+{
+  // The shared replay length exceeds the proximity-only exception and keeps
+  // the first bounded progress scan below the 95% threshold at the goal.
+  auto replay = std::make_shared<nav_msgs::msg::Path>();
+  replay->header.frame_id = "map";
+  for (std::size_t i = 0; i < mowgli_interfaces::kCoverageResumeReplayPoses; ++i)
+  {
+    geometry_msgs::msg::PoseStamped pose;
+    pose.pose.position.x = 100.0 + 0.1 * static_cast<double>(i);
+    pose.pose.orientation.w = 1.0;
+    replay->poses.push_back(pose);
+  }
+  checker_.onPath(replay);
+
+  auto replay_goal = goal_;
+  replay_goal.position.x = 1.1;
+  EXPECT_FALSE(checker_.isGoalReached(replay_goal, replay_goal, {}, {}));
+
+  // On a fresh replay, actual forward motion is still required before normal
+  // progress-gated completion can occur.
+  checker_.reset();
+  checker_.onPath(replay);
+  auto replay_front = replay_goal;
+  replay_front.position.x = 0.0;
+  EXPECT_FALSE(checker_.isGoalReached(replay_front, replay_goal, {}, {}));
+  auto replay_near_end = replay_goal;
+  replay_near_end.position.x = 1.0;
+  EXPECT_FALSE(checker_.isGoalReached(replay_near_end, replay_goal, {}, {}));
+  EXPECT_TRUE(checker_.isGoalReached(replay_goal, replay_goal, {}, {}));
+}
+
 TEST_F(PathProgressGoalCheckerTest, ProgressUsesMapToOdomTransform)
 {
   advance();

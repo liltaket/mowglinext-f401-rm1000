@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 
+#include "mowgli_interfaces/coverage_path_invariants.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "tf2/utils.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
@@ -60,7 +61,9 @@ void PathProgressGoalChecker::initialize(
   // Short paths (<= this many poses) complete on proximity, not progress —
   // per-swath DISCONTINUOUS coverage feeds short swaths + tiny turn-connectors
   // that the 95%-progress gate can't reliably register (stall). See header.
-  short_path_poses_ = static_cast<size_t>(declare("short_path_poses", 10).as_int());
+  short_path_poses_ = static_cast<size_t>(
+      declare("short_path_poses", static_cast<int>(mowgli_interfaces::kCoverageShortPathPoses))
+          .as_int());
 
   // Which controller's republished plan to track. Default matches the
   // FollowCoveragePath FTC slot from nav2_params.yaml. If you have a
