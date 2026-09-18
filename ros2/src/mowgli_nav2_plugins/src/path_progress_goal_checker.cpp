@@ -97,6 +97,7 @@ void PathProgressGoalChecker::reset()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   max_reached_index_ = 0;
+  last_progress_query_.reset();
   empty_path_first_call_.reset();
 }
 
@@ -139,6 +140,7 @@ void PathProgressGoalChecker::onPath(nav_msgs::msg::Path::SharedPtr msg)
     last_path_first_x_ = fx;
     last_path_first_y_ = fy;
     max_reached_index_ = 0;
+    last_progress_query_.reset();
     RCLCPP_INFO(logger_,
                 "PathProgressGoalChecker: new path with %zu poses, "
                 "start=(%.2f,%.2f), end=(%.2f,%.2f) — reset progress",
@@ -267,24 +269,39 @@ bool PathProgressGoalChecker::isGoalReached(const geometry_msgs::msg::Pose& quer
       return false;
     }
   }
-  const size_t start = std::min(max_reached_index_, n - 1);
-  const size_t end_exclusive = std::min(start + max_idx_advance_per_call_ + 1, n);
-  double best_d2 = std::numeric_limits<double>::infinity();
-  size_t best_idx = max_reached_index_;
-  for (size_t i = start; i < end_exclusive; ++i)
+
+  // Controller-server can call us many times with an unchanged pose while it
+  // waits at the endpoint. Without this gate each call advances the bounded
+  // search window, turning callback frequency into fake path progress.
+  bool query_moved = !last_progress_query_.has_value();
+  if (!query_moved)
   {
-    const double dx = path_poses_[i].pose.position.x - progress_pose.position.x;
-    const double dy = path_poses_[i].pose.position.y - progress_pose.position.y;
-    const double d2 = dx * dx + dy * dy;
-    if (d2 < best_d2)
-    {
-      best_d2 = d2;
-      best_idx = i;
-    }
+    query_moved =
+        std::hypot(progress_pose.position.x - last_progress_query_->x,
+                   progress_pose.position.y - last_progress_query_->y) >= kMinProgressQueryMotionM;
   }
-  if (best_idx > max_reached_index_)
+  if (query_moved)
   {
-    max_reached_index_ = best_idx;
+    last_progress_query_ = progress_pose.position;
+    const size_t start = std::min(max_reached_index_, n - 1);
+    const size_t end_exclusive = std::min(start + max_idx_advance_per_call_ + 1, n);
+    double best_d2 = std::numeric_limits<double>::infinity();
+    size_t best_idx = max_reached_index_;
+    for (size_t i = start; i < end_exclusive; ++i)
+    {
+      const double dx = path_poses_[i].pose.position.x - progress_pose.position.x;
+      const double dy = path_poses_[i].pose.position.y - progress_pose.position.y;
+      const double d2 = dx * dx + dy * dy;
+      if (d2 < best_d2)
+      {
+        best_d2 = d2;
+        best_idx = i;
+      }
+    }
+    if (best_idx > max_reached_index_)
+    {
+      max_reached_index_ = best_idx;
+    }
   }
 
   const double progress = static_cast<double>(max_reached_index_) / static_cast<double>(n - 1);

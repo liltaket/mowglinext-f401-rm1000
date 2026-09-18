@@ -84,18 +84,21 @@ TEST_F(PathProgressGoalCheckerTest, NearEndReplayNeedsProgressBeforeProximityCom
 
   auto replay_goal = goal_;
   replay_goal.position.x = 1.1;
-  EXPECT_FALSE(checker_.isGoalReached(replay_goal, replay_goal, {}, {}));
+  for (int tick = 0; tick < 20; ++tick)
+  {
+    EXPECT_FALSE(checker_.isGoalReached(replay_goal, replay_goal, {}, {})) << "tick " << tick;
+  }
 
   // On a fresh replay, actual forward motion is still required before normal
   // progress-gated completion can occur.
   checker_.reset();
   checker_.onPath(replay);
-  auto replay_front = replay_goal;
-  replay_front.position.x = 0.0;
-  EXPECT_FALSE(checker_.isGoalReached(replay_front, replay_goal, {}, {}));
-  auto replay_near_end = replay_goal;
-  replay_near_end.position.x = 1.0;
-  EXPECT_FALSE(checker_.isGoalReached(replay_near_end, replay_goal, {}, {}));
+  for (std::size_t i = 0; i + 1 < replay->poses.size(); ++i)
+  {
+    auto replay_pose = replay_goal;
+    replay_pose.position.x = 0.1 * static_cast<double>(i);
+    EXPECT_FALSE(checker_.isGoalReached(replay_pose, replay_goal, {}, {})) << "pose " << i;
+  }
   EXPECT_TRUE(checker_.isGoalReached(replay_goal, replay_goal, {}, {}));
 }
 

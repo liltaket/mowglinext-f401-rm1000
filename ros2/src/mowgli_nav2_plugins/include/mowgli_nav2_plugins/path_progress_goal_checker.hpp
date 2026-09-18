@@ -109,6 +109,11 @@ private:
   std::mutex mutex_;
   std::vector<geometry_msgs::msg::PoseStamped> path_poses_;
   size_t max_reached_index_{0};
+  // A controller may ask isGoalReached repeatedly without moving. Do not let
+  // those callback ticks consume the bounded forward-search window as fake
+  // path progress.
+  std::optional<geometry_msgs::msg::Point> last_progress_query_;
+  static constexpr double kMinProgressQueryMotionM = 0.005;
   // Detect a fresh path so we can reset the max-reached index. Use the
   // pose count + first-pose XY as a cheap fingerprint (header.stamp is
   // unreliable when controller_server forwards a stale plan).
