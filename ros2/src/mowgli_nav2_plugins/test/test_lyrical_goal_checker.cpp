@@ -38,7 +38,7 @@ protected:
       pose.pose.orientation.w = 1.0;
       path->poses.push_back(pose);
     }
-    checker_.onPath(path);
+    setPath(path);
     goal_.position.x = 10.0;
     goal_.orientation.w = 1.0;
   }
@@ -52,6 +52,8 @@ protected:
       checker_.isGoalReached(pose, goal_, {}, {});
     }
   }
+
+  void setPath(const nav_msgs::msg::Path::SharedPtr& path) { checker_.onPath(path); }
 
   std::shared_ptr<nav2::LifecycleNode> node_;
   PathProgressGoalChecker checker_;
@@ -80,7 +82,7 @@ TEST_F(PathProgressGoalCheckerTest, NearEndReplayNeedsProgressBeforeProximityCom
     pose.pose.orientation.w = 1.0;
     replay->poses.push_back(pose);
   }
-  checker_.onPath(replay);
+  setPath(replay);
 
   auto replay_goal = goal_;
   replay_goal.position.x = 1.1;
@@ -99,7 +101,7 @@ TEST_F(PathProgressGoalCheckerTest, NearEndReplayNeedsProgressBeforeProximityCom
   // On a fresh replay, actual forward motion is still required before normal
   // progress-gated completion can occur.
   checker_.reset();
-  checker_.onPath(replay);
+  setPath(replay);
   for (std::size_t i = 0; i + 1 < replay->poses.size(); ++i)
   {
     auto replay_pose = replay_goal;
