@@ -29,10 +29,13 @@
  */
 
 #include <cstddef>
+#include <cstdio>
 #include <set>
+#include <string>
 
 #include "mowgli_behavior/bt_context.hpp"
 #include "mowgli_behavior/coverage_nodes.hpp"
+#include "mowgli_behavior/coverage_persistence.hpp"
 #include <gtest/gtest.h>
 
 using mowgli_behavior::BTContext;
@@ -174,5 +177,36 @@ TEST(CoverageInterruption, NeverInfersCompletionFromNearEndCursor)
     EXPECT_TRUE(ctx.completed_areas.empty());
     EXPECT_LT(ctx.coverage_percent, 100.0f);
     EXPECT_FLOAT_EQ(ctx.coverage_percent, coveragePercentFromCursor(cursor, kTotal));
+  }
+}
+
+TEST(CoverageInterruption, NearEndCursorSurvivesRestart)
+{
+  constexpr std::size_t kTotal = 1000;
+  constexpr uint32_t kArea = 7;
+
+  for (const std::size_t cursor : {940u, 950u, 990u})
+  {
+    const std::string path =
+        std::string(::testing::TempDir()) + "/coverage_interruption_" + std::to_string(cursor);
+    std::remove(path.c_str());
+
+    BTContext saved;
+    saved.coverage_resume_path = path;
+    saved.area_path_pose_count[kArea] = kTotal;
+    saved.area_plan_fingerprint[kArea] = 0x647;
+    saved.area_completed_swaths[kArea] = {0};
+    recordInterruptedCoverageProgress(saved, kArea, cursor, kTotal);
+    ASSERT_TRUE(saveCoverageResumeState(saved));
+
+    BTContext restarted;
+    restarted.coverage_resume_path = path;
+    ASSERT_TRUE(loadCoverageResumeState(restarted));
+    ASSERT_EQ(restarted.area_resume_pose_index.count(kArea), 1u);
+    EXPECT_EQ(restarted.area_resume_pose_index.at(kArea), cursor);
+    EXPECT_EQ(restarted.area_completed_swaths.at(kArea), (std::set<std::size_t>{0}));
+    EXPECT_EQ(restarted.completed_areas.count(kArea), 0u);
+
+    std::remove(path.c_str());
   }
 }
