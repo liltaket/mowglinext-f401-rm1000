@@ -53,7 +53,10 @@ protected:
     }
   }
 
-  void setPath(const nav_msgs::msg::Path::SharedPtr& path) { checker_.onPath(path); }
+  void setPath(const nav_msgs::msg::Path::SharedPtr& path)
+  {
+    checker_.onPath(path);
+  }
 
   std::shared_ptr<nav2::LifecycleNode> node_;
   PathProgressGoalChecker checker_;
