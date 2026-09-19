@@ -163,8 +163,11 @@ TEST(BladeTelemetryContract, RejectsTransitionalRawDeciwattFirmware)
   EXPECT_TRUE(blade_telemetry_contract_compatible(kMowgliProtocolVersion, 0u));
   EXPECT_TRUE(
       blade_telemetry_contract_compatible(kMowgliProtocolVersion, CONFIG_FLAG_FIRMWARE_DEBUG));
-  EXPECT_FALSE(blade_telemetry_contract_compatible(kMowgliProtocolVersion,
-                                                   CONFIG_CAPABILITY_LEGACY_BLADE_POWER_DECIWATTS));
+  // Literal values are captured from the transitional 543e881c image: 0x80
+  // alone, or 0x81 when firmware debug was also enabled. Do not let a mirrored
+  // constant drift make this compatibility regression self-consistently pass.
+  EXPECT_FALSE(blade_telemetry_contract_compatible(kMowgliProtocolVersion, 0x80u));
+  EXPECT_FALSE(blade_telemetry_contract_compatible(kMowgliProtocolVersion, 0x81u));
   EXPECT_FALSE(blade_telemetry_contract_compatible(kMowgliProtocolVersion - 1u, 0u));
 }
 

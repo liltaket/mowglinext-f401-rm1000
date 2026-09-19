@@ -288,7 +288,7 @@ extern "C" {
  * New firmware never sets it because blade telemetry is normalized to mA on
  * the STM32. Hosts retain the bit only to reject that incompatible raw-unit
  * image instead of silently reading deciwatts as milliamps. */
-#define CONFIG_CAPABILITY_LEGACY_BLADE_POWER_DECIWATTS (1u << 1u)
+#define CONFIG_CAPABILITY_LEGACY_BLADE_POWER_DECIWATTS (1u << 7u)
 
 /* ---------------------------------------------------------------------------
  * Packed wire-format structs

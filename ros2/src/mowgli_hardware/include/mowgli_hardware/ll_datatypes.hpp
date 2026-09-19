@@ -182,7 +182,7 @@ constexpr std::size_t LL_USS_SENSOR_COUNT = 5u;
 constexpr uint8_t CONFIG_FLAG_FIRMWARE_DEBUG = (1u << 0u);
 // Deprecated raw-unit marker from one transitional RM1000 firmware image.
 // Current firmware never sets it; the host uses it only to reject that image.
-constexpr uint8_t CONFIG_CAPABILITY_LEGACY_BLADE_POWER_DECIWATTS = (1u << 1u);
+constexpr uint8_t CONFIG_CAPABILITY_LEGACY_BLADE_POWER_DECIWATTS = (1u << 7u);
 
 // ---------------------------------------------------------------------------
 // Wire-format structs — all fields packed with no padding
