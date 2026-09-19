@@ -46,6 +46,9 @@
  * (board.h / template) — the runtime value (PKT_ID_SET_KINEMATICS) can only
  * LOWER the motion cap, never raise it above the compiled safety limit. */
 #define DRIVEMOTOR_MIN_MAX_MPS 0.1f
+/* Controller replies follow 20 ms polls.  Three missed replies plus 15 ms
+ * cooperative-loop slack is a link fault, not an invitation to reuse output. */
+#define DRIVEMOTOR_FEEDBACK_TIMEOUT_MS 75u
 /******************************************************************************
  * Module Preprocessor Macros
  *******************************************************************************/
@@ -99,9 +102,28 @@ DMA_HandleTypeDef hdma_usart2_tx;
 static DRIVEMOTOR_STATE_e drivemotor_eState = DRIVEMOTOR_INIT_1;
 static rx_status_e drivemotors_eRxFlag = RX_WAIT;
 
-static DRIVEMOTORS_data_t drivemotor_psReceivedData = {0};
-static uint8_t drivemotor_pu8RqstMessage[DRIVEMOTOR_LENGTH_RQST_MSG] = {
-    0x55, 0xaa, 0x08, 0x10, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+/* DMA writes this buffer only.  The completion IRQ validates it then copies a
+ * complete immutable snapshot; foreground never reads DMA memory. */
+static DRIVEMOTORS_data_t drivemotor_dma_received = {0};
+typedef struct {
+  DRIVEMOTORS_data_t frame;
+  uint32_t tick;
+  uint32_t sequence;
+  uint8_t valid;
+  uint8_t controller_error;
+} DRIVEMOTOR_snapshot_t;
+static volatile DRIVEMOTOR_snapshot_t drivemotor_snapshot = {0};
+static uint32_t drivemotor_consumed_sequence = 0;
+static volatile uint32_t drivemotor_last_valid_tick = 0;
+static volatile uint8_t drivemotor_seen_valid = 0;
+static volatile uint8_t drivemotor_fault = 0;
+static volatile uint8_t drivemotor_recover_rx = 0;
+static volatile uint8_t drivemotor_rx_armed = 0;
+static volatile uint32_t drivemotor_rx_started_tick = 0;
+static uint8_t drivemotor_tx[2][DRIVEMOTOR_LENGTH_RQST_MSG];
+static uint8_t drivemotor_tx_slot = 0;
+static volatile uint8_t drivemotor_tx_busy = 0;
+static volatile uint32_t drivemotor_tx_started_tick = 0;
 
 const uint8_t drivemotor_pcu8Preamble[5] = {0x55, 0xAA, 0x10, 0x01, 0xE0};
 // const uint8_t drivemotor_pcu8InitMsg[DRIVEMOTOR_LENGTH_INIT_MSG] = { 0x55,
@@ -194,9 +216,78 @@ static uint8_t right_dir_req;
 /******************************************************************************
  * Function Prototypes
  *******************************************************************************/
-__STATIC_INLINE void drivemotor_prepareMsg(uint8_t left_speed,
+__STATIC_INLINE void drivemotor_prepareMsg(uint8_t *msg, uint8_t left_speed,
                                            uint8_t right_speed,
                                            uint8_t left_dir, uint8_t right_dir);
+
+static void drivemotor_recover_rx_if_needed(void) {
+  const uint32_t now = HAL_GetTick();
+  if (drivemotor_tx_busy &&
+      (uint32_t)(now - drivemotor_tx_started_tick) >
+          DRIVEMOTOR_FEEDBACK_TIMEOUT_MS) {
+    /* A request still busy past the whole response deadline cannot safely
+     * retain DMA ownership forever. Abort TX only after that bounded wait so
+     * a normal in-flight zero command is never cut short. */
+    drivemotor_fault = 1u;
+    MOTORLINK_ForceInhibit();
+    if (HAL_UART_AbortTransmit(&DRIVEMOTORS_USART_Handler) == HAL_OK) {
+      drivemotor_tx_busy = 0u;
+    }
+  }
+  if (drivemotor_rx_armed &&
+      (uint32_t)(now - drivemotor_rx_started_tick) >
+          DRIVEMOTOR_FEEDBACK_TIMEOUT_MS) {
+    drivemotor_fault = 1u;
+    MOTORLINK_ForceInhibit();
+    drivemotor_recover_rx = 1u;
+  }
+  if (drivemotor_recover_rx) {
+    /* Keep the request latched when HAL refuses the abort; a later foreground
+     * pass retries instead of falsely claiming the DMA was rearmed. */
+    if (HAL_UART_AbortReceive(&DRIVEMOTORS_USART_Handler) == HAL_OK) {
+      drivemotor_rx_armed = 0u;
+      drivemotor_recover_rx = 0u;
+    }
+  }
+}
+
+static void drivemotor_start_exchange(uint8_t *tx) {
+  if (drivemotor_tx_busy || drivemotor_rx_armed || drivemotor_recover_rx) {
+    return;
+  }
+  if (HAL_UART_Receive_DMA(&DRIVEMOTORS_USART_Handler,
+                           (uint8_t *)&drivemotor_dma_received,
+                           sizeof(drivemotor_dma_received)) != HAL_OK) {
+    drivemotor_fault = 1u;
+    MOTORLINK_ForceInhibit();
+    drivemotor_recover_rx = 1u;
+    return;
+  }
+  drivemotor_rx_armed = 1u;
+  drivemotor_rx_started_tick = HAL_GetTick();
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  if (MOTORLINK_OutputInhibited()) {
+    /* Close the race between preparing a non-zero frame and starting DMA. */
+    drivemotor_prepareMsg(tx, 0, 0, 0, 0);
+  }
+  const HAL_StatusTypeDef tx_status =
+      HAL_UART_Transmit_DMA(&DRIVEMOTORS_USART_Handler, tx,
+                            DRIVEMOTOR_LENGTH_RQST_MSG);
+  if (tx_status == HAL_OK) {
+    drivemotor_tx_slot ^= 1u;
+    drivemotor_tx_busy = 1u;
+    drivemotor_tx_started_tick = HAL_GetTick();
+  } else {
+    /* RX accepted but request TX did not: no reply can be expected. */
+    drivemotor_fault = 1u;
+    MOTORLINK_ForceInhibit();
+    drivemotor_recover_rx = 1u;
+  }
+  if (primask == 0u) {
+    __enable_irq();
+  }
+}
 
 /******************************************************************************
  *  Public Functions
@@ -329,33 +420,37 @@ void DRIVEMOTOR_App_10ms(void) {
 
   static uint32_t l_u32Timestamp = 0;
 
+  drivemotor_recover_rx_if_needed();
   switch (drivemotor_eState) {
   case DRIVEMOTOR_INIT_1:
-
-    HAL_UART_Transmit_DMA(&DRIVEMOTORS_USART_Handler,
-                          (uint8_t *)drivemotor_pcu8InitMsg,
-                          DRIVEMOTOR_LENGTH_INIT_MSG);
-    drivemotor_eState = DRIVEMOTOR_RUN;
-    debug_printf(" * Drive Motor Controller initialized\r\n");
+    if (HAL_UART_Transmit_DMA(&DRIVEMOTORS_USART_Handler,
+                              (uint8_t *)drivemotor_pcu8InitMsg,
+                              DRIVEMOTOR_LENGTH_INIT_MSG) == HAL_OK) {
+      drivemotor_tx_busy = 1u;
+      drivemotor_tx_started_tick = HAL_GetTick();
+      drivemotor_eState = DRIVEMOTOR_RUN;
+      debug_printf(" * Drive Motor Controller initialization command queued\r\n");
+    }
     break;
 
-  case DRIVEMOTOR_RUN:
+  case DRIVEMOTOR_RUN: {
 
-    /* prepare to receive the message before to launch the command */
-    HAL_UART_Receive_DMA(&DRIVEMOTORS_USART_Handler,
-                         (uint8_t *)&drivemotor_psReceivedData,
-                         sizeof(DRIVEMOTORS_data_t));
-
-    drivemotor_prepareMsg(left_speed_req, right_speed_req, left_dir_req,
-                          right_dir_req);
-    /* error State*/
-    if (drivemotor_psReceivedData.u8_error != 0) {
-      drivemotor_prepareMsg(0, 0, 0, 0);
-      DRIVEMOTOR_u32ErrorCnt++;
+    uint8_t *tx = drivemotor_tx[drivemotor_tx_slot ^ 1u];
+    const bool feedback_healthy = DRIVEMOTOR_FeedbackHealthy();
+    const bool output_allowed = feedback_healthy &&
+                                !MOTORLINK_OutputInhibited();
+    if (output_allowed) {
+      drivemotor_prepareMsg(tx, left_speed_req, right_speed_req, left_dir_req,
+                            right_dir_req);
+    } else {
+      /* The driver-level gate closes in the same foreground pass as an ISR
+       * fault, without waiting for cpp_main to reset its control loops. */
+      drivemotor_prepareMsg(tx, 0, 0, 0, 0);
     }
 
     /* todo add also accelerometer detection*/
-    if ((HALLSTOP_Left_Sense() || HALLSTOP_Right_Sense()) &&
+    if (output_allowed &&
+        (HALLSTOP_Left_Sense() || HALLSTOP_Right_Sense()) &&
         (left_dir_req || right_dir_req)) {
 
       switch (main_eOpenmowerStatus) {
@@ -367,7 +462,7 @@ void DRIVEMOTOR_App_10ms(void) {
       case OPENMOWER_STATUS_DOCKING:
         /* Get voltage from dock, stop the mower*/
         if (chargerInputVoltage > MIN_DOCKED_VOLTAGE) {
-          drivemotor_prepareMsg(0, 0, 0, 0);
+          drivemotor_prepareMsg(tx, 0, 0, 0, 0);
         } else { /*hit something goes back */
           drivemotor_eState = DRIVEMOTOR_BACKWARD;
           l_u32Timestamp = HAL_GetTick();
@@ -383,49 +478,36 @@ void DRIVEMOTOR_App_10ms(void) {
       }
     }
 
-    HAL_UART_Transmit_DMA(&DRIVEMOTORS_USART_Handler,
-                          (uint8_t *)drivemotor_pu8RqstMessage,
-                          DRIVEMOTOR_LENGTH_RQST_MSG);
+    drivemotor_start_exchange(tx);
 
     break;
+  }
 
   case DRIVEMOTOR_BACKWARD:
-    /* prepare to receive the message before to launch the command */
-    HAL_UART_Receive_DMA(&DRIVEMOTORS_USART_Handler,
-                         (uint8_t *)&drivemotor_psReceivedData,
-                         sizeof(DRIVEMOTORS_data_t));
-
     /* SAFETY: the collision auto-reverse drives the wheels open-loop at
      * 100 PWM. It must NEVER run while an emergency (e-stop button, wheel
      * lift, tilt, accelerometer, heartbeat-loss) is asserted. If emergency
      * fires mid-reverse, hard-stop the wheels this frame and abandon the
      * maneuver back to RUN (where cmd_vel drive is itself gated to 0 by the
      * hard_stop path in cpp_main). */
-    if (Emergency_State() != 0) {
-      drivemotor_prepareMsg(0, 0, 0, 0);
+    if (Emergency_State() != 0 || !DRIVEMOTOR_FeedbackHealthy() ||
+        MOTORLINK_OutputInhibited()) {
+      drivemotor_prepareMsg(drivemotor_tx[drivemotor_tx_slot ^ 1u], 0, 0, 0, 0);
       drivemotor_eState = DRIVEMOTOR_RUN;
     } else {
-      drivemotor_prepareMsg(100, 100, 0, 0); /* set to -0.33m/s  */
+      drivemotor_prepareMsg(drivemotor_tx[drivemotor_tx_slot ^ 1u], 100, 100, 0, 0); /* set to -0.33m/s  */
       if ((HAL_GetTick() - l_u32Timestamp) > 2000) {
         drivemotor_eState = DRIVEMOTOR_WAIT;
         l_u32Timestamp = HAL_GetTick();
       }
     }
-    HAL_UART_Transmit_DMA(&DRIVEMOTORS_USART_Handler,
-                          (uint8_t *)drivemotor_pu8RqstMessage,
-                          DRIVEMOTOR_LENGTH_RQST_MSG);
+    drivemotor_start_exchange(drivemotor_tx[drivemotor_tx_slot ^ 1u]);
 
     break;
 
   case DRIVEMOTOR_WAIT:
-    /* prepare to receive the message before to launch the command */
-    HAL_UART_Receive_DMA(&DRIVEMOTORS_USART_Handler,
-                         (uint8_t *)&drivemotor_psReceivedData,
-                         sizeof(DRIVEMOTORS_data_t));
-    drivemotor_prepareMsg(0, 0, 0, 0);
-    HAL_UART_Transmit_DMA(&DRIVEMOTORS_USART_Handler,
-                          (uint8_t *)drivemotor_pu8RqstMessage,
-                          DRIVEMOTOR_LENGTH_RQST_MSG);
+    drivemotor_prepareMsg(drivemotor_tx[drivemotor_tx_slot ^ 1u], 0, 0, 0, 0);
+    drivemotor_start_exchange(drivemotor_tx[drivemotor_tx_slot ^ 1u]);
 
     /* SAFETY: bail out of the post-reverse settle immediately on emergency
      * so the state machine returns to the (emergency-gated) RUN state
@@ -556,9 +638,22 @@ static int8_t DRIVEMOTOR_UpdateWheel(DRIVEMOTOR_dirfilter_t *f, int8_t reported,
 /// @brief Decode received drive motor messages
 /// @param
 void DRIVEMOTOR_App_Rx(void) {
-  if (drivemotors_eRxFlag == RX_VALID) {
+  DRIVEMOTOR_snapshot_t snapshot;
+  __disable_irq();
+  const uint32_t sequence = drivemotor_snapshot.sequence;
+  if (sequence == drivemotor_consumed_sequence || !drivemotor_snapshot.valid) {
+    __enable_irq();
+    return;
+  }
+  snapshot = drivemotor_snapshot;
+  __enable_irq();
+  /* Mark only this immutable completion as consumed.  A newer ISR completion
+   * has a different sequence and remains available for the next foreground pass. */
+  drivemotor_consumed_sequence = sequence;
+  if (snapshot.valid && !snapshot.controller_error) {
+    const DRIVEMOTORS_data_t *frame = &snapshot.frame;
     /* decode */
-    uint8_t direction = drivemotor_psReceivedData.u8_direction;
+    uint8_t direction = frame->u8_direction;
     // we need to adjust for direction (+/-) !
     if ((direction & 0xc0) == 0xc0) {
       left_direction = 1;
@@ -575,12 +670,12 @@ void DRIVEMOTOR_App_Rx(void) {
       right_direction = 0;
     }
 
-    left_encoder_val = drivemotor_psReceivedData.u16_left_ticks;
-    right_encoder_val = drivemotor_psReceivedData.u16_right_ticks;
+    left_encoder_val = frame->u16_left_ticks;
+    right_encoder_val = frame->u16_right_ticks;
 
     // power consumption
-    left_power = drivemotor_psReceivedData.u8_left_power;
-    right_power = drivemotor_psReceivedData.u8_right_power;
+    left_power = frame->u8_left_power;
+    right_power = frame->u8_right_power;
 
     /*
      * Fold each wheel's controller frame into its tick totals and resolve
@@ -597,24 +692,23 @@ void DRIVEMOTOR_App_Rx(void) {
      */
     int8_t l_s8EffLeftDir = DRIVEMOTOR_UpdateWheel(
         &left_dir_filter, left_direction,
-        drivemotor_psReceivedData.u8_left_speed, left_encoder_val,
+        frame->u8_left_speed, left_encoder_val,
         &prev_left_encoder_val, &left_encoder_ticks, &left_ticks_signed);
     int8_t l_s8EffRightDir = DRIVEMOTOR_UpdateWheel(
         &right_dir_filter, right_direction,
-        drivemotor_psReceivedData.u8_right_speed, right_encoder_val,
+        frame->u8_right_speed, right_encoder_val,
         &prev_right_encoder_val, &right_encoder_ticks, &right_ticks_signed);
 
     /* Sign the reported speed magnitude by the CONFIRMED direction too, so
      * the host's velocity sign agrees with the signed-tick trend. */
     left_wheel_speed_val =
-        l_s8EffLeftDir * drivemotor_psReceivedData.u8_left_speed;
+        l_s8EffLeftDir * frame->u8_left_speed;
     right_wheel_speed_val =
-        l_s8EffRightDir * drivemotor_psReceivedData.u8_right_speed;
+        l_s8EffRightDir * frame->u8_right_speed;
 
     wheelTicks_handler(left_ticks_signed, right_ticks_signed,
                        left_wheel_speed_val, right_wheel_speed_val);
 
-    drivemotors_eRxFlag = RX_WAIT; // ready for next message
   }
 }
 
@@ -689,26 +783,67 @@ void DRIVEMOTOR_SetSpeed(uint8_t left_speed, uint8_t right_speed,
 /// @brief drive motor receive interrupt handler
 /// @param
 void DRIVEMOTOR_ReceiveIT(void) {
-  /* decode the frame */
-  if (memcmp(drivemotor_pcu8Preamble, (uint8_t *)&drivemotor_psReceivedData,
+  /* IRQ owns the DMA buffer: validate, then publish one complete snapshot. */
+  DRIVEMOTOR_snapshot_t next = {0};
+  drivemotor_rx_armed = 0u;
+  if (memcmp(drivemotor_pcu8Preamble, (uint8_t *)&drivemotor_dma_received,
              5) == 0) {
-    uint8_t l_u8crc = crcCalc((uint8_t *)&drivemotor_psReceivedData,
+    uint8_t l_u8crc = crcCalc((uint8_t *)&drivemotor_dma_received,
                               DRIVEMOTOR_LENGTH_RECEIVED_MSG - 1);
-    if (drivemotor_psReceivedData.u8_CRC == l_u8crc) {
+    if (drivemotor_dma_received.u8_CRC == l_u8crc) {
+      next.frame = drivemotor_dma_received;
+      next.tick = HAL_GetTick();
+      next.valid = 1u;
+      next.controller_error = next.frame.u8_error != 0u;
+      next.sequence = drivemotor_snapshot.sequence + 1u;
+      drivemotor_snapshot = next;
+      if (!next.controller_error) {
+        drivemotor_last_valid_tick = next.tick;
+        drivemotor_seen_valid = 1u;
+        drivemotor_fault = 0u;
+      } else {
+        drivemotor_fault = 1u;
+        MOTORLINK_ForceInhibit();
+        DRIVEMOTOR_u32ErrorCnt++;
+      }
       drivemotors_eRxFlag = RX_VALID;
     } else {
+      drivemotor_fault = 1u;
+      MOTORLINK_ForceInhibit();
+      drivemotor_recover_rx = 1u;
+      DRIVEMOTOR_u32ErrorCnt++;
       drivemotors_eRxFlag = RX_CRC_ERROR;
     }
   } else {
+    drivemotor_fault = 1u;
+    MOTORLINK_ForceInhibit();
+    drivemotor_recover_rx = 1u;
+    DRIVEMOTOR_u32ErrorCnt++;
     drivemotors_eRxFlag = RX_INVALID_ERROR;
   }
+}
+
+void DRIVEMOTOR_OnUartError(void) {
+  drivemotor_fault = 1u;
+  MOTORLINK_ForceInhibit();
+  drivemotor_rx_armed = 0u;
+  drivemotor_recover_rx = 1u;
+  DRIVEMOTOR_u32ErrorCnt++;
+}
+
+void DRIVEMOTOR_OnTxComplete(void) { drivemotor_tx_busy = 0u; }
+
+bool DRIVEMOTOR_FeedbackHealthy(void) {
+  return drivemotor_seen_valid != 0u && drivemotor_fault == 0u &&
+         (uint32_t)(HAL_GetTick() - drivemotor_last_valid_tick) <=
+             DRIVEMOTOR_FEEDBACK_TIMEOUT_MS;
 }
 
 /******************************************************************************
  *  Private Functions
  *******************************************************************************/
 
-__STATIC_INLINE void drivemotor_prepareMsg(uint8_t left_speed,
+__STATIC_INLINE void drivemotor_prepareMsg(uint8_t *drivemotor_pu8RqstMessage, uint8_t left_speed,
                                            uint8_t right_speed,
                                            uint8_t left_dir,
                                            uint8_t right_dir) {
