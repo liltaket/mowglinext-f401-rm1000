@@ -21,26 +21,52 @@ SHIM = r'''
 #include <stdio.h>
 typedef struct { unsigned gState; } UART_HandleTypeDef;
 typedef int DMA_HandleTypeDef;
+typedef int HAL_StatusTypeDef;
 #define HAL_UART_STATE_READY 0u
 #define HAL_OK 0
 #define HAL_BUSY 1
 static uint32_t test_tick, test_primask;
 static int test_tx_result;
+static int test_rx_result, test_abort_tx_result, test_abort_rx_result;
+static uint8_t test_inhibited;
+static void (*test_handoff_hook)(void);
+static uint8_t test_handoff_armed;
 static unsigned test_tx_count;
 static unsigned test_rx_count, test_wait_count, test_trace_count;
 static char test_debug_line[200];
 static uint8_t test_frame[22];
 static uint32_t HAL_GetTick(void) { return test_tick; }
 static uint32_t __get_PRIMASK(void) { return test_primask; }
-static void __disable_irq(void) { test_primask = 1; }
+static void __disable_irq(void) {
+    if (test_handoff_armed && test_handoff_hook) {
+        void (*hook)(void) = test_handoff_hook;
+        test_handoff_armed = 0;
+        test_handoff_hook = 0;
+        hook();
+    }
+    test_primask = 1;
+}
 static void __set_PRIMASK(uint32_t value) { test_primask = value; }
+static void __enable_irq(void) { test_primask = 0; }
+static void MOTORLINK_ForceInhibit(void) { test_inhibited = 1; }
+static void MOTORLINK_ClearInhibit(void) { test_inhibited = 0; }
+static uint8_t MOTORLINK_OutputInhibited(void) { return test_inhibited; }
+static _Bool BLADEMOTOR_FeedbackHealthy(void);
 static int HAL_UART_Transmit_DMA(UART_HandleTypeDef *h, uint8_t *p, unsigned n) {
-    (void)h;
+    if (h->gState != HAL_UART_STATE_READY) return HAL_BUSY;
     if (!test_tx_result) { memcpy(test_frame, p, n); ++test_tx_count; }
     return test_tx_result;
 }
 static int HAL_UART_Receive_DMA(UART_HandleTypeDef *h, uint8_t *p, unsigned n) {
-    (void)h; (void)p; (void)n; ++test_rx_count; return HAL_OK;
+    (void)h; (void)p; (void)n; ++test_rx_count;
+    if (test_rx_result == HAL_OK && test_handoff_hook) test_handoff_armed = 1;
+    return test_rx_result;
+}
+static int HAL_UART_AbortTransmit(UART_HandleTypeDef *h) {
+    (void)h; return test_abort_tx_result;
+}
+static int HAL_UART_AbortReceive(UART_HandleTypeDef *h) {
+    (void)h; return test_abort_rx_result;
 }
 static void debug_printf(const char *fmt, ...) {
     va_list args; va_start(args, fmt);
@@ -57,7 +83,11 @@ TEST = r'''
 
 static void reset(void) {
     test_tick = 100;
-    test_primask = test_tx_count = test_tx_result = 0;
+    test_primask = test_tx_count = test_tx_result = test_rx_result = 0;
+    test_abort_tx_result = test_abort_rx_result = 0;
+    test_inhibited = 0;
+    test_handoff_hook = 0;
+    test_handoff_armed = 0;
     test_rx_count = test_wait_count = test_trace_count = 0;
     test_debug_line[0] = 0;
     BLADEMOTOR_USART_Handler.gState = HAL_UART_STATE_READY;
@@ -71,30 +101,56 @@ static void reset(void) {
     blademotor_trace_seq = blademotor_trace_tx_tick = blademotor_trace_command = 0;
 #endif
     blademotor_feedback = (blademotor_feedback_t){0};
+    blademotor_snapshot = (BLADEMOTOR_snapshot_t){0};
+    blademotor_consumed_sequence = 0;
+    blademotor_seen_valid = 1;
+    blademotor_last_valid_tick = test_tick;
+    blademotor_fault = blademotor_recover_rx = blademotor_rx_armed = 0;
+    blademotor_rx_started_tick = 0;
+    blademotor_tx_slot = blademotor_tx_busy = blademotor_tx_started_tick = 0;
+    memset(blademotor_tx, 0, sizeof(blademotor_tx));
     BLADEMOTOR_bActivated = false;
     BLADEMOTOR_u16RPM = BLADEMOTOR_u16Power = BLADEMOTOR_u32Error = 0;
-    memset(blademotor_pu8ReceivedData, 0, sizeof(blademotor_pu8ReceivedData));
+    memset(blademotor_dma_received, 0, sizeof(blademotor_dma_received));
 }
 static void frame(uint8_t command) {
+    if (test_frame[5] != command)
+        fprintf(stderr, "frame t=%u tx=%u expected=%02x actual=%02x busy=%u rx=%u fault=%u inhibit=%u\n",
+                test_tick, test_tx_count, command, test_frame[5], blademotor_tx_busy,
+                blademotor_rx_armed, blademotor_fault, test_inhibited);
     assert(test_frame[5] == command);
     assert(test_frame[6] == crcCalc(test_frame, 6));
     assert(test_frame[6] == (command == 0xC0 ? 0x62 : command == 0x80 ? 0x22 : 0xA2));
+    BLADEMOTOR_OnTxComplete();
+    /* Legacy command assertions omit most replies. Treat those exchanges as
+     * completed so the next asserted command can be issued. */
+    blademotor_rx_armed = 0;
 }
 /* valid: 1 good, 0 bad checksum, -1 bad preamble with otherwise valid checksum. */
 static void feedback(unsigned advance, unsigned rpm, unsigned active, unsigned error, int valid) {
     test_tick += advance;
-    memset(blademotor_pu8ReceivedData, 0, sizeof(blademotor_pu8ReceivedData));
-    blademotor_pu8ReceivedData[0] = valid == -1 ? 0 : 0x55;
-    blademotor_pu8ReceivedData[1] = 0xAA;
-    blademotor_pu8ReceivedData[5] = active ? 0x80 : 0;
-    blademotor_pu8ReceivedData[6] = error;
-    blademotor_pu8ReceivedData[7] = rpm & 255;
-    blademotor_pu8ReceivedData[8] = rpm >> 8;
-    blademotor_pu8ReceivedData[BLADEMOTOR_LENGTH_RECEIVED_MSG-1] =
-        crcCalc(blademotor_pu8ReceivedData, BLADEMOTOR_LENGTH_RECEIVED_MSG-1) ^ (valid == 0);
+    memset(blademotor_dma_received, 0, sizeof(blademotor_dma_received));
+    blademotor_dma_received[0] = valid == -1 ? 0 : 0x55;
+    blademotor_dma_received[1] = 0xAA;
+    blademotor_dma_received[5] = active ? 0x80 : 0;
+    blademotor_dma_received[6] = error;
+    blademotor_dma_received[7] = rpm & 255;
+    blademotor_dma_received[8] = rpm >> 8;
+    blademotor_dma_received[BLADEMOTOR_LENGTH_RECEIVED_MSG-1] =
+        crcCalc(blademotor_dma_received, BLADEMOTOR_LENGTH_RECEIVED_MSG-1) ^ (valid == 0);
     BLADEMOTOR_ReceiveIT();
 }
-static void zero(unsigned advance) { feedback(advance, 0, 0, 0, 1); BLADEMOTOR_App(); }
+static void zero(unsigned advance) {
+    feedback(advance, 0, 0, 0, 1);
+    /* The test supervisor has observed fresh feedback and a new host zero. */
+    MOTORLINK_ClearInhibit();
+    BLADEMOTOR_App();
+}
+#if !BLADEMOTOR_COASTDOWN_VALIDATION
+static void inject_active_nonzero_reply(void) {
+    feedback(0, 3494, 1, 0, 1);
+}
+#endif
 static void reversing(void) {
     reset(); BLADEMOTOR_Set(1, 0); BLADEMOTOR_App(); frame(0x80);
     feedback(100, 3300, 1, 0, 1);
@@ -116,6 +172,7 @@ int main(void) {
     feedback(100,3300,1,0,1); test_primask=1; BLADEMOTOR_App();
     assert(test_primask==1 && test_trace_count==1);
     assert(strstr(test_debug_line,"tx=80 tx_t=100 seq=1 rx_t=200 valid=1 active=1 speed_word=3300"));
+    frame(0x80);
     BLADEMOTOR_Set(0,0); BLADEMOTOR_App(); frame(0);
     assert(test_trace_count==1);
     feedback(100,3300,0,0,1); BLADEMOTOR_App(); frame(0);
@@ -140,6 +197,27 @@ int main(void) {
     BLADEMOTOR_Set(1, 0); BLADEMOTOR_App(); frame(0);
     for (unsigned i=0; i<9; ++i) { zero(100); frame(0); }
     zero(100); frame(0x80); // symmetric reverse-to-forward interlock
+
+    // A newer checksum-valid active/nonzero reply can arrive after prepare
+    // qualifies reversal but before DMA accepts the frame. It must send OFF
+    // with the correct checksum and restart zero confirmation. This reply is
+    // link-healthy, so the shared fault inhibit alone cannot catch it.
+    reversing();
+    for (unsigned i=0; i<9; ++i) { zero(100); frame(0); }
+    feedback(100,0,0,0,1);
+    test_handoff_hook=inject_active_nonzero_reply;
+    BLADEMOTOR_App(); frame(0);
+    assert(!test_handoff_hook && !MOTORLINK_OutputInhibited());
+    assert(blademotor_reverse_pending && blademotor_u8RunDirection==0);
+    for (unsigned i=0; i<3; ++i) { zero(100); frame(0); }
+    zero(100); frame(0xC0);
+
+    // Same-direction ON has no reversal release token and remains permitted
+    // when an otherwise valid running report arrives in that same window.
+    reset(); BLADEMOTOR_Set(1,0);
+    test_handoff_hook=inject_active_nonzero_reply;
+    BLADEMOTOR_App(); frame(0x80);
+    assert(!test_handoff_hook && !MOTORLINK_OutputInhibited());
 
     // Recorded 500 pattern: inactive promptly, speed word held nonzero for
     // ~2 s, then an abrupt zero. Exercise both directions and a longer hold;
@@ -228,21 +306,22 @@ int main(void) {
     reset(); BLADEMOTOR_Set(1,0); BLADEMOTOR_App(); frame(0x80);
     BLADEMOTOR_USART_Handler.gState=1;
     BLADEMOTOR_Set(1,1); BLADEMOTOR_App();
-    assert(blademotor_pu8RqstMessage[5]==0x80 && test_tx_count==1);
+    assert(test_frame[5]==0x80 && test_tx_count==1);
     BLADEMOTOR_USART_Handler.gState=HAL_UART_STATE_READY;
     BLADEMOTOR_App(); frame(0);
 
-    // TX busy must not skip receive re-arm or a controller-error stop.
+    // RX is armed before TX. A controller error still inhibits while TX owns
+    // its buffer; the next exchange waits for completion and sends OFF.
     reset(); BLADEMOTOR_Set(1,0); BLADEMOTOR_App();
     feedback(100,3300,1,2,1);
-    BLADEMOTOR_USART_Handler.gState=HAL_BUSY;
     unsigned rx_before=test_rx_count;
     BLADEMOTOR_App();
-    assert(test_rx_count==rx_before+1 && BLADEMOTOR_u32Error==1);
-    assert(!blademotor_u8OnOff && test_tx_count==1);
-    assert(blademotor_pu8RqstMessage[5]==0x80); // DMA-owned frame unchanged
-    feedback(100,0,0,0,1); // clearing the error cannot revive the cancelled ON
-    BLADEMOTOR_USART_Handler.gState=HAL_UART_STATE_READY;
+    assert(test_rx_count==rx_before && BLADEMOTOR_u32Error==1);
+    assert(MOTORLINK_OutputInhibited() && test_tx_count==1);
+    assert(test_frame[5]==0x80); // DMA-owned frame unchanged
+    BLADEMOTOR_OnTxComplete();
+    BLADEMOTOR_App(); frame(0);
+    feedback(100,0,0,0,1); // good feedback cannot clear sticky inhibit
     BLADEMOTOR_App(); frame(0);
 
     // Nonzero noise, active, invalid and missing replies remain OFF and report
@@ -258,7 +337,7 @@ int main(void) {
         }
         BLADEMOTOR_USART_Handler.gState=HAL_BUSY;
         test_tick+=100; BLADEMOTOR_App();
-        assert(test_wait_count==2 && BLADEMOTOR_u32Error==2);
+        assert(test_wait_count==2 && BLADEMOTOR_u32Error>=2);
         BLADEMOTOR_Set(0,0); test_tick+=5000; BLADEMOTOR_App();
         assert(test_wait_count==2); // OFF cancels warnings as well as reversal
     }

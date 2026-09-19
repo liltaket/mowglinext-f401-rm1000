@@ -256,6 +256,15 @@ static volatile float g_yaw_gyro_bias = 0.0f;
 static volatile uint8_t target_blade_on_off = 0;
 static uint8_t blade_on_off = 0;
 static uint8_t blade_direction = 0;
+/* Incremented only when a validated host packet establishes combined zero
+ * drive intent and blade-off intent. Invalid packets and low-level inhibits do
+ * not count as operator/supervisor consent to re-arm. */
+static volatile uint32_t host_zero_phase_sequence = 0;
+/* Link faults must not replay a cached non-zero host intent when feedback
+ * returns.  Re-arm is deliberately a host-visible zero phase, not the zero we
+ * force below while inhibited. */
+static bool motor_link_rearm_required = true;
+static uint32_t motor_link_rearm_zero_baseline = 0;
 
 /* ---------------------------------------------------------------------------
  * cmd_vel timeout tracking (replaces ros::Time)
@@ -431,6 +440,9 @@ static void on_cmd_vel(const uint8_t *data, size_t len) {
   last_cmd_vel_tick = safety_state.last_valid_tick;
 
   if (main_eOpenmowerStatus == OPENMOWER_STATUS_IDLE) {
+    if (vx == 0.0f && wz == 0.0f && target_blade_on_off == 0u) {
+      host_zero_phase_sequence++;
+    }
     return;
   }
 
@@ -463,6 +475,9 @@ static void on_cmd_vel(const uint8_t *data, size_t len) {
    * deadband on sub-deadband commands. */
   left_target_mps = left_mps;
   right_target_mps = right_mps;
+  if (left_mps == 0.0f && right_mps == 0.0f && target_blade_on_off == 0u) {
+    host_zero_phase_sequence++;
+  }
 }
 
 static void on_set_drive_pid(const uint8_t *data, size_t len) {
@@ -662,6 +677,7 @@ static void on_hl_state(const uint8_t *data, size_t len) {
     left_target_mps = right_target_mps = 0.0f;
     cmd_wz = 0.0f;
     blade_on_off = target_blade_on_off = 0;
+    host_zero_phase_sequence++;
     break;
   }
 
@@ -685,6 +701,10 @@ static void on_cmd_blade(const uint8_t *data, size_t len) {
     target_blade_on_off = pkt->blade_on;
   }
   blade_direction = pkt->blade_dir;
+  if (pkt->blade_on == 0u && left_target_mps == 0.0f &&
+      right_target_mps == 0.0f) {
+    host_zero_phase_sequence++;
+  }
 }
 
 /* Host -> Firmware reboot request. Sets reboot_flag so chatter_handler issues
@@ -843,7 +863,42 @@ extern "C" void motors_handler() {
     uint32_t snap_heartbeat = last_heartbeat_tick;
     uint32_t snap_cmd_vel = last_cmd_vel_tick;
     float snap_ticks_per_meter = DRIVEMOTOR_GetTicksPerMeter();
+    uint32_t snap_host_zero_sequence = host_zero_phase_sequence;
     __enable_irq();
+
+    const bool motor_link_healthy = DRIVEMOTOR_FeedbackHealthy() &&
+                                    BLADEMOTOR_FeedbackHealthy();
+    if (!motor_link_healthy) {
+      MOTORLINK_ForceInhibit();
+      motor_link_rearm_required = true;
+      /* Consent must be newer than the last unhealthy supervisor sample. */
+      motor_link_rearm_zero_baseline = snap_host_zero_sequence;
+    } else if (MOTORLINK_OutputInhibited() && !motor_link_rearm_required) {
+      /* Sticky across a bad completion followed by a good one between two
+       * control ticks; a transient link fault cannot evade the zero phase. */
+      motor_link_rearm_required = true;
+      motor_link_rearm_zero_baseline = snap_host_zero_sequence;
+    }
+    if (motor_link_healthy && motor_link_rearm_required &&
+        snap_host_zero_sequence != motor_link_rearm_zero_baseline &&
+        snap_left_target == 0.0f && snap_right_target == 0.0f &&
+        snap_target_blade == 0u) {
+      /* Re-check and clear atomically with respect to UART callbacks.  A link
+       * fault arriving after the first health check must win over re-arm. */
+      const uint32_t primask = __get_PRIMASK();
+      __disable_irq();
+      if (MOTORLINK_OutputInhibited() && DRIVEMOTOR_FeedbackHealthy() &&
+          BLADEMOTOR_FeedbackHealthy() &&
+          host_zero_phase_sequence != motor_link_rearm_zero_baseline &&
+          left_target_mps == 0.0f && right_target_mps == 0.0f &&
+          target_blade_on_off == 0u) {
+        motor_link_rearm_required = false;
+        MOTORLINK_ClearInhibit();
+      }
+      if (primask == 0u) {
+        __enable_irq();
+      }
+    }
 
     blade_on_off = snap_target_blade;
 
@@ -851,7 +906,10 @@ extern "C" void motors_handler() {
      * Emergency or cmd_vel watchdog timeout overrides to a hard stop.
      * Otherwise the snapshot value drives the PI loop below. */
     bool hard_stop = false;
-    if (Emergency_State()) {
+    if (motor_link_rearm_required) {
+      hard_stop = true;
+      blade_on_off = 0;
+    } else if (Emergency_State()) {
       hard_stop = true;
       blade_on_off = 0;
     } else if (main_eOpenmowerStatus == OPENMOWER_STATUS_IDLE) {

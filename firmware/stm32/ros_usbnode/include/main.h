@@ -78,6 +78,12 @@ void ADC_Test();
 float ADC_BatteryVoltage(uint8_t adc_conversions);
 float ADC_ChargeVoltage(uint8_t adc_conversions);
 float ADC_ChargeCurrent(uint8_t adc_conversions);
+
+/* Any drive or blade link fault latches this shared output inhibit. Only the
+ * main control path may clear it after healthy feedback and a host zero phase. */
+void MOTORLINK_ForceInhibit(void);
+void MOTORLINK_ClearInhibit(void);
+uint8_t MOTORLINK_OutputInhibited(void);
 void ChargeController(void);
 void EmergencyController(void);
 void StatusLEDUpdate(void);
