@@ -38,6 +38,11 @@
 *******************************************************************************/
 typedef enum {
     BLADEMOTOR_INIT_1,
+    BLADEMOTOR_RESET_HOLD,
+    BLADEMOTOR_LOGIC_BOOT,
+    BLADEMOTOR_VERSION_WAIT,
+    BLADEMOTOR_MATRIX_WAIT,
+    BLADEMOTOR_POWER_WAIT,
     BLADEMOTOR_INIT_2,
     BLADEMOTOR_RUN
 }BLADEMOTOR_STATE_e;
@@ -78,8 +83,13 @@ static uint8_t blademotor_tx_slot = 0;
 static volatile uint8_t blademotor_tx_busy = 0;
 static volatile uint32_t blademotor_tx_started_tick = 0;
 static uint8_t blademotor_u8OnOff = 0;
+static uint8_t blademotor_u8Direction = 0;
+#if defined(BLADEMOTOR_SEQUENCED_POWER)
+static uint32_t blademotor_state_started_tick = 0;
+#endif
 
 const uint8_t blademotor_pcu8Preamble[5]  = {0x55,0xAA,0x0A,0x2,0xD0};
+const uint8_t blademotor_pcu8VersionMsg[BLADEMOTOR_LENGTH_RQST_MSG] = {0x55, 0xaa, 0x03, 0x20, 0x5a, 0x06, 0x82};
 const uint8_t blademotor_pcu8InitMsg[BLADEMOTOR_LENGTH_INIT_MSG] =  { 0x55, 0xaa, 0x12, 0x20, 0x80, 0x00, 0xac, 0x0d, 0x00, 0x02, 0x32, 0x50, 0x1e, 0x04, 0x00, 0x15, 0x21, 0x05, 0x0a, 0x19, 0x3c, 0xaa };
 /******************************************************************************
 * Function Prototypes
@@ -93,11 +103,12 @@ void blademotor_prepareMsg(uint8_t *msg)
 {    
     if (blademotor_u8OnOff)
     {
-        msg[5] = BLADEMOTOR_ON_COMMAND_VALUE; /* board-specific run value */
+        msg[5] = blademotor_u8Direction ? BLADEMOTOR_REVERSE_COMMAND_VALUE
+                                        : BLADEMOTOR_FORWARD_COMMAND_VALUE;
     }
     else
     {
-        msg[5] = 0x00; /* change speed Motor */
+        msg[5] = BLADEMOTOR_STOP_COMMAND_VALUE;
     }
     msg[6] = crcCalc(msg, BLADEMOTOR_LENGTH_RQST_MSG - 1u);
 }
@@ -130,11 +141,12 @@ static void blademotor_recover_rx_if_needed(void)
     }
 }
 
-static void blademotor_start_exchange(uint8_t *tx)
+static bool blademotor_start_exchange(uint8_t *tx, uint16_t tx_length,
+                                      bool guard_run_command)
 {
     if (blademotor_tx_busy || blademotor_rx_armed || blademotor_recover_rx)
     {
-        return;
+        return false;
     }
     if (HAL_UART_Receive_DMA(&BLADEMOTOR_USART_Handler, blademotor_dma_received,
                              BLADEMOTOR_LENGTH_RECEIVED_MSG) != HAL_OK)
@@ -142,21 +154,20 @@ static void blademotor_start_exchange(uint8_t *tx)
         blademotor_fault = 1u;
         MOTORLINK_ForceInhibit();
         blademotor_recover_rx = 1u;
-        return;
+        return false;
     }
     blademotor_rx_armed = 1u;
     blademotor_rx_started_tick = HAL_GetTick();
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
-    if (MOTORLINK_OutputInhibited())
+    if (guard_run_command && MOTORLINK_OutputInhibited())
     {
         /* Close the race between preparing ON and handing the frame to DMA. */
-        tx[5] = 0x00;
-        tx[6] = 0xa2;
+        tx[5] = BLADEMOTOR_STOP_COMMAND_VALUE;
+        tx[6] = crcCalc(tx, BLADEMOTOR_LENGTH_RQST_MSG - 1u);
     }
     const HAL_StatusTypeDef tx_status =
-        HAL_UART_Transmit_DMA(&BLADEMOTOR_USART_Handler, tx,
-                              BLADEMOTOR_LENGTH_RQST_MSG);
+        HAL_UART_Transmit_DMA(&BLADEMOTOR_USART_Handler, tx, tx_length);
     if (tx_status == HAL_OK)
     {
         blademotor_tx_slot ^= 1u;
@@ -173,6 +184,7 @@ static void blademotor_start_exchange(uint8_t *tx)
     {
         __enable_irq();
     }
+    return tx_status == HAL_OK;
 }
 
 /**
@@ -189,8 +201,19 @@ void BLADEMOTOR_Init(void)
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_HIGH;
+#if defined(BLADEMOTOR_SEQUENCED_POWER)
+    HAL_GPIO_WritePin(PAC5223RESET_GPIO_PORT, PAC5223RESET_PIN, 0);
+#else
+    HAL_GPIO_WritePin(PAC5223RESET_GPIO_PORT, PAC5223RESET_PIN, 1);
+#endif
     HAL_GPIO_Init(PAC5223RESET_GPIO_PORT, &GPIO_InitStruct);
-    HAL_GPIO_WritePin(PAC5223RESET_GPIO_PORT, PAC5223RESET_PIN, 1);     /* take Blade PAC out of reset if HIGH */
+#if defined(BLADEMOTOR_SEQUENCED_POWER)
+    BLADEMOTOR_POWER_GPIO_CLK_ENABLE();
+    GPIO_InitStruct.Pin = BLADEMOTOR_POWER_PIN;
+    /* Keep the inverter supply off while the PAC5223 logic is reset. */
+    HAL_GPIO_WritePin(BLADEMOTOR_POWER_GPIO_PORT, BLADEMOTOR_POWER_PIN, 1);
+    HAL_GPIO_Init(BLADEMOTOR_POWER_GPIO_PORT, &GPIO_InitStruct);
+#endif
 
     // enable port and usart clocks
     BLADEMOTOR_USART_GPIO_CLK_ENABLE();
@@ -298,7 +321,12 @@ void BLADEMOTOR_Init(void)
 	HAL_NVIC_EnableIRQ(usart_irq);
     __HAL_UART_ENABLE_IT(&BLADEMOTOR_USART_Handler, UART_IT_TC);
 
-    blademotor_eState = BLADEMOTOR_INIT_1;    
+#if defined(BLADEMOTOR_SEQUENCED_POWER)
+    blademotor_state_started_tick = HAL_GetTick();
+    blademotor_eState = BLADEMOTOR_RESET_HOLD;
+#else
+    blademotor_eState = BLADEMOTOR_INIT_1;
+#endif
 }
 
 /// @brief handle drive motor messages
@@ -320,6 +348,65 @@ void  BLADEMOTOR_App(void){
     blademotor_recover_rx_if_needed();
     switch (blademotor_eState)
     {
+#if defined(BLADEMOTOR_SEQUENCED_POWER)
+    case BLADEMOTOR_RESET_HOLD:
+        if ((uint32_t)(HAL_GetTick() - blademotor_state_started_tick) >= 50u)
+        {
+            HAL_GPIO_WritePin(PAC5223RESET_GPIO_PORT, PAC5223RESET_PIN, 1);
+            blademotor_state_started_tick = HAL_GetTick();
+            blademotor_eState = BLADEMOTOR_LOGIC_BOOT;
+        }
+        break;
+
+    case BLADEMOTOR_LOGIC_BOOT:
+        if ((uint32_t)(HAL_GetTick() - blademotor_state_started_tick) >= 100u)
+        {
+            uint8_t *tx = blademotor_tx[blademotor_tx_slot ^ 1u];
+            memcpy(tx, blademotor_pcu8VersionMsg, BLADEMOTOR_LENGTH_RQST_MSG);
+            if (blademotor_start_exchange(tx, BLADEMOTOR_LENGTH_RQST_MSG, false))
+            {
+                blademotor_state_started_tick = HAL_GetTick();
+                blademotor_eState = BLADEMOTOR_VERSION_WAIT;
+            }
+        }
+        break;
+
+    case BLADEMOTOR_VERSION_WAIT:
+        if ((uint32_t)(HAL_GetTick() - blademotor_state_started_tick) >= 20u &&
+            !blademotor_tx_busy && !blademotor_rx_armed)
+        {
+            if (HAL_UART_Transmit_DMA(&BLADEMOTOR_USART_Handler,
+                                      (uint8_t*)blademotor_pcu8InitMsg,
+                                      BLADEMOTOR_LENGTH_INIT_MSG) == HAL_OK)
+            {
+                blademotor_tx_busy = 1u;
+                blademotor_tx_started_tick = HAL_GetTick();
+                blademotor_state_started_tick = HAL_GetTick();
+                blademotor_eState = BLADEMOTOR_MATRIX_WAIT;
+            }
+        }
+        break;
+
+    case BLADEMOTOR_MATRIX_WAIT:
+        if ((uint32_t)(HAL_GetTick() - blademotor_state_started_tick) >= 20u &&
+            !blademotor_tx_busy)
+        {
+            HAL_GPIO_WritePin(BLADEMOTOR_POWER_GPIO_PORT,
+                              BLADEMOTOR_POWER_PIN, 0);
+            blademotor_state_started_tick = HAL_GetTick();
+            blademotor_eState = BLADEMOTOR_POWER_WAIT;
+        }
+        break;
+
+    case BLADEMOTOR_POWER_WAIT:
+        if ((uint32_t)(HAL_GetTick() - blademotor_state_started_tick) >= 50u)
+        {
+            blademotor_eState = BLADEMOTOR_RUN;
+            debug_printf(" * RM1000 Blade Motor Controller initialized\r\n");
+        }
+        break;
+#endif
+
     case BLADEMOTOR_INIT_1:
 
         if (HAL_UART_Transmit_DMA(&BLADEMOTOR_USART_Handler, (uint8_t*)blademotor_pcu8InitMsg, BLADEMOTOR_LENGTH_INIT_MSG) == HAL_OK) {
@@ -341,10 +428,10 @@ void  BLADEMOTOR_App(void){
         else
         {
             /* Preserve polling and OFF delivery while feedback is untrusted. */
-            tx[5] = 0x00;
-            tx[6] = 0xa2;
+            tx[5] = BLADEMOTOR_STOP_COMMAND_VALUE;
+            tx[6] = crcCalc(tx, BLADEMOTOR_LENGTH_RQST_MSG - 1u);
         }
-        blademotor_start_exchange(tx);
+        blademotor_start_exchange(tx, BLADEMOTOR_LENGTH_RQST_MSG, true);
         break;
     }
     
@@ -356,9 +443,9 @@ void  BLADEMOTOR_App(void){
 /// @brief control blade motor (there is no speed control for this motor)
 /// @param on_off 1 to turn on, 0 to turn off
 void BLADEMOTOR_Set(uint8_t on_off, uint8_t direction)
-{       
-    (void)direction;
+{
     blademotor_u8OnOff = on_off;
+    blademotor_u8Direction = direction;
 }
 
 /// @brief drive motor receive interrupt handler
