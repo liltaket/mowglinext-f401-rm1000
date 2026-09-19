@@ -16,6 +16,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include <stdbool.h>
 /******************************************************************************
  * Includes
  *******************************************************************************/
@@ -66,6 +67,12 @@ void DRIVEMOTOR_Init(void);
 void DRIVEMOTOR_App_10ms(void);
 void DRIVEMOTOR_App_Rx(void);
 void DRIVEMOTOR_ReceiveIT(void);
+void DRIVEMOTOR_OnUartError(void);
+void DRIVEMOTOR_OnTxComplete(void);
+/* A valid controller frame is required at least every 75 ms (three 20 ms
+ * polls plus scheduling slack).  This is deliberately much shorter than the
+ * host command watchdog and uses unsigned tick subtraction (wrap-safe). */
+bool DRIVEMOTOR_FeedbackHealthy(void);
 /**
  * Preferred API — signed PWM per wheel. Positive = forward, negative =
  * reverse, 0 = stop. Applies motor static-friction deadband compensation

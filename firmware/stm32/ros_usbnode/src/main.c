@@ -75,6 +75,13 @@ uint8_t do_chirp_duration_counter;
 uint8_t do_chirp = 0;
 
 openmower_status_e main_eOpenmowerStatus = OPENMOWER_STATUS_IDLE;
+static volatile uint8_t motor_link_output_inhibited = 1u;
+
+void MOTORLINK_ForceInhibit(void) { motor_link_output_inhibited = 1u; }
+void MOTORLINK_ClearInhibit(void) { motor_link_output_inhibited = 0u; }
+uint8_t MOTORLINK_OutputInhibited(void) {
+  return motor_link_output_inhibited;
+}
 
 #if BOARD_YARDFORCE500_VARIANT_ORIG
 UART_HandleTypeDef MASTER_USART_Handler; // UART  Handle
@@ -1393,7 +1400,14 @@ void HAL_WWDG_EarlyWakeupCallback(WWDG_HandleTypeDef *hwwdg)
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-  // do nothing here
+  if (huart->Instance == BLADEMOTOR_USART_INSTANCE)
+  {
+    BLADEMOTOR_OnUartError();
+  }
+  else if (huart->Instance == DRIVEMOTORS_USART_INSTANCE)
+  {
+    DRIVEMOTOR_OnUartError();
+  }
 }
 
 /*
@@ -1413,6 +1427,14 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     master_tx_busy = 0;
   }
 #endif
+  if (huart->Instance == BLADEMOTOR_USART_INSTANCE)
+  {
+    BLADEMOTOR_OnTxComplete();
+  }
+  else if (huart->Instance == DRIVEMOTORS_USART_INSTANCE)
+  {
+    DRIVEMOTOR_OnTxComplete();
+  }
 }
 
 void HAL_UART_TxHalfCpltCallback(UART_HandleTypeDef *huart)

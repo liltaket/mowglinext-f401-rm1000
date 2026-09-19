@@ -28,6 +28,7 @@
 *******************************************************************************/
 #define BLADEMOTOR_LENGTH_INIT_MSG 22
 #define BLADEMOTOR_LENGTH_RQST_MSG 7
+#define BLADEMOTOR_FEEDBACK_TIMEOUT_MS 350u
 /******************************************************************************
 * Module Preprocessor Macros
 *******************************************************************************/
@@ -56,8 +57,26 @@ uint16_t BLADEMOTOR_u16RPM = 0;
 uint16_t BLADEMOTOR_u16Power = 0;
 uint32_t BLADEMOTOR_u32Error = 0;
 
-static uint8_t blademotor_pu8ReceivedData[BLADEMOTOR_LENGTH_RECEIVED_MSG] = {0};
-static uint8_t blademotor_pu8RqstMessage[BLADEMOTOR_LENGTH_RQST_MSG]  = {0x55, 0xaa, 0x03, 0x20, 0x80, 0x00, 0xA2};
+/* DMA storage is ISR-private.  Foreground consumes a validated copy once. */
+static uint8_t blademotor_dma_received[BLADEMOTOR_LENGTH_RECEIVED_MSG] = {0};
+typedef struct {
+    uint8_t frame[BLADEMOTOR_LENGTH_RECEIVED_MSG];
+    uint32_t tick;
+    uint32_t sequence;
+    uint8_t valid;
+} BLADEMOTOR_snapshot_t;
+static volatile BLADEMOTOR_snapshot_t blademotor_snapshot = {0};
+static uint32_t blademotor_consumed_sequence = 0;
+static volatile uint32_t blademotor_last_valid_tick = 0;
+static volatile uint8_t blademotor_seen_valid = 0;
+static volatile uint8_t blademotor_fault = 0;
+static volatile uint8_t blademotor_recover_rx = 0;
+static volatile uint8_t blademotor_rx_armed = 0;
+static volatile uint32_t blademotor_rx_started_tick = 0;
+static uint8_t blademotor_tx[2][BLADEMOTOR_LENGTH_RQST_MSG];
+static uint8_t blademotor_tx_slot = 0;
+static volatile uint8_t blademotor_tx_busy = 0;
+static volatile uint32_t blademotor_tx_started_tick = 0;
 static uint8_t blademotor_u8OnOff = 0;
 
 const uint8_t blademotor_pcu8Preamble[5]  = {0x55,0xAA,0x0A,0x2,0xD0};
@@ -70,17 +89,90 @@ const uint8_t blademotor_pcu8InitMsg[BLADEMOTOR_LENGTH_INIT_MSG] =  { 0x55, 0xaa
 *  Public Functions
 *******************************************************************************/
 
-void blademotor_prepareMsg(void)
+void blademotor_prepareMsg(uint8_t *msg)
 {    
     if (blademotor_u8OnOff)
     {
-        blademotor_pu8RqstMessage[5] = 0x80; /* change speed Motor */
-        blademotor_pu8RqstMessage[6] = 0x22; /* change CRC */
+        msg[5] = 0x80; /* change speed Motor */
+        msg[6] = 0x22; /* change CRC */
     }
     else
     {
-        blademotor_pu8RqstMessage[5] = 0x00; /* change speed Motor */
-        blademotor_pu8RqstMessage[6] = 0xa2; /* change CRC */
+        msg[5] = 0x00; /* change speed Motor */
+        msg[6] = 0xa2; /* change CRC */
+    }
+}
+
+static void blademotor_recover_rx_if_needed(void)
+{
+    const uint32_t now = HAL_GetTick();
+    if (blademotor_tx_busy &&
+        (uint32_t)(now - blademotor_tx_started_tick) > BLADEMOTOR_FEEDBACK_TIMEOUT_MS)
+    {
+        blademotor_fault = 1u;
+        MOTORLINK_ForceInhibit();
+        if (HAL_UART_AbortTransmit(&BLADEMOTOR_USART_Handler) == HAL_OK)
+        {
+            blademotor_tx_busy = 0u;
+        }
+    }
+    if (blademotor_rx_armed &&
+        (uint32_t)(now - blademotor_rx_started_tick) > BLADEMOTOR_FEEDBACK_TIMEOUT_MS)
+    {
+        blademotor_fault = 1u;
+        MOTORLINK_ForceInhibit();
+        blademotor_recover_rx = 1u;
+    }
+    if (blademotor_recover_rx &&
+        HAL_UART_AbortReceive(&BLADEMOTOR_USART_Handler) == HAL_OK)
+    {
+        blademotor_rx_armed = 0u;
+        blademotor_recover_rx = 0u;
+    }
+}
+
+static void blademotor_start_exchange(uint8_t *tx)
+{
+    if (blademotor_tx_busy || blademotor_rx_armed || blademotor_recover_rx)
+    {
+        return;
+    }
+    if (HAL_UART_Receive_DMA(&BLADEMOTOR_USART_Handler, blademotor_dma_received,
+                             BLADEMOTOR_LENGTH_RECEIVED_MSG) != HAL_OK)
+    {
+        blademotor_fault = 1u;
+        MOTORLINK_ForceInhibit();
+        blademotor_recover_rx = 1u;
+        return;
+    }
+    blademotor_rx_armed = 1u;
+    blademotor_rx_started_tick = HAL_GetTick();
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    if (MOTORLINK_OutputInhibited())
+    {
+        /* Close the race between preparing ON and handing the frame to DMA. */
+        tx[5] = 0x00;
+        tx[6] = 0xa2;
+    }
+    const HAL_StatusTypeDef tx_status =
+        HAL_UART_Transmit_DMA(&BLADEMOTOR_USART_Handler, tx,
+                              BLADEMOTOR_LENGTH_RQST_MSG);
+    if (tx_status == HAL_OK)
+    {
+        blademotor_tx_slot ^= 1u;
+        blademotor_tx_busy = 1u;
+        blademotor_tx_started_tick = HAL_GetTick();
+    }
+    else
+    {
+        blademotor_fault = 1u;
+        MOTORLINK_ForceInhibit();
+        blademotor_recover_rx = 1u;
+    }
+    if (primask == 0u)
+    {
+        __enable_irq();
     }
 }
 
@@ -213,28 +305,49 @@ void BLADEMOTOR_Init(void)
 /// @brief handle drive motor messages
 /// @param  
 void  BLADEMOTOR_App(void){
+    BLADEMOTOR_snapshot_t snapshot;
+    __disable_irq();
+    if (blademotor_snapshot.sequence != blademotor_consumed_sequence &&
+        blademotor_snapshot.valid) {
+        snapshot = blademotor_snapshot;
+        blademotor_consumed_sequence = snapshot.sequence;
+        __enable_irq();
+        BLADEMOTOR_bActivated = (snapshot.frame[5] & 0x80u) != 0u;
+        BLADEMOTOR_u16RPM = snapshot.frame[7] + (snapshot.frame[8] << 8);
+        BLADEMOTOR_u16Power = snapshot.frame[9] + (snapshot.frame[10] << 8);
+    } else {
+        __enable_irq();
+    }
+    blademotor_recover_rx_if_needed();
     switch (blademotor_eState)
     {
     case BLADEMOTOR_INIT_1:
 
-        HAL_UART_Transmit_DMA(&BLADEMOTOR_USART_Handler, (uint8_t*)blademotor_pcu8InitMsg, BLADEMOTOR_LENGTH_INIT_MSG);
-        blademotor_eState = BLADEMOTOR_RUN;
-        debug_printf(" * Blade Motor Controller initialized\r\n");     
+        if (HAL_UART_Transmit_DMA(&BLADEMOTOR_USART_Handler, (uint8_t*)blademotor_pcu8InitMsg, BLADEMOTOR_LENGTH_INIT_MSG) == HAL_OK) {
+            blademotor_tx_busy = 1u;
+            blademotor_tx_started_tick = HAL_GetTick();
+            blademotor_eState = BLADEMOTOR_RUN;
+            debug_printf(" * Blade Motor Controller initialization command queued\r\n");
+        }
         break;
     
-    case BLADEMOTOR_RUN:
+    case BLADEMOTOR_RUN: {
 
-        /*error detected*/
-        if(blademotor_pu8ReceivedData[6] != 0){
-            blademotor_u8OnOff = 0;
-            BLADEMOTOR_u32Error++;
+        uint8_t *tx = blademotor_tx[blademotor_tx_slot ^ 1u];
+        tx[0] = 0x55; tx[1] = 0xaa; tx[2] = 0x03; tx[3] = 0x20; tx[4] = 0x80;
+        if (BLADEMOTOR_FeedbackHealthy() && !MOTORLINK_OutputInhibited())
+        {
+            blademotor_prepareMsg(tx);
         }
-        blademotor_prepareMsg();
-        /* prepare to receive the message before to launch the command */        
-        HAL_UART_Receive_DMA(&BLADEMOTOR_USART_Handler, blademotor_pu8ReceivedData, BLADEMOTOR_LENGTH_RECEIVED_MSG);
-                  
-        HAL_UART_Transmit_DMA(&BLADEMOTOR_USART_Handler, (uint8_t*)blademotor_pu8RqstMessage, BLADEMOTOR_LENGTH_RQST_MSG);    
+        else
+        {
+            /* Preserve polling and OFF delivery while feedback is untrusted. */
+            tx[5] = 0x00;
+            tx[6] = 0xa2;
+        }
+        blademotor_start_exchange(tx);
         break;
+    }
     
     default:
         break;
@@ -245,44 +358,56 @@ void  BLADEMOTOR_App(void){
 /// @param on_off 1 to turn on, 0 to turn off
 void BLADEMOTOR_Set(uint8_t on_off, uint8_t direction)
 {       
+    (void)direction;
     blademotor_u8OnOff = on_off;
-    if (on_off)
-    {
-        /*if (direction) {
-            blademotor_pu8RqstMessage[5] = 0xC0;
-            blademotor_pu8RqstMessage[6] = 0xE2;
-        } else {*/
-            blademotor_pu8RqstMessage[5] = 0x80; /* change speed Motor */
-            blademotor_pu8RqstMessage[6] = 0x22; /* change CRC */
-        //}
-    }
-    else
-    {
-        blademotor_pu8RqstMessage[5] = 0x00; /* change speed Motor */
-        blademotor_pu8RqstMessage[6] = 0xa2; /* change CRC */
-    }
 }
 
 /// @brief drive motor receive interrupt handler
 /// @param  
 void BLADEMOTOR_ReceiveIT(void)
 {
-    /* decode the frame */    
-    if(memcmp(blademotor_pcu8Preamble, blademotor_pu8ReceivedData, 2) == 0){        
-        uint8_t l_u8crc = crcCalc(blademotor_pu8ReceivedData, BLADEMOTOR_LENGTH_RECEIVED_MSG-1);
+    /* decode the frame */
+    blademotor_rx_armed = 0u;
+    if(memcmp(blademotor_pcu8Preamble, blademotor_dma_received, 2) == 0){
+        uint8_t l_u8crc = crcCalc(blademotor_dma_received, BLADEMOTOR_LENGTH_RECEIVED_MSG-1);
 
-        if(blademotor_pu8ReceivedData[BLADEMOTOR_LENGTH_RECEIVED_MSG-1] == l_u8crc ){
-            if((blademotor_pu8ReceivedData[5] & 0x80) == 0x80){
-                BLADEMOTOR_bActivated = true;
-            }
-            else{
-                BLADEMOTOR_bActivated = false;
-            }
-            BLADEMOTOR_u16RPM = blademotor_pu8ReceivedData[7] + (blademotor_pu8ReceivedData[8]<<8);
-            BLADEMOTOR_u16Power = blademotor_pu8ReceivedData[9] + (blademotor_pu8ReceivedData[10]<<8) ;           
+        if(blademotor_dma_received[BLADEMOTOR_LENGTH_RECEIVED_MSG-1] == l_u8crc &&
+           blademotor_dma_received[6] == 0u){
+            BLADEMOTOR_snapshot_t next = {0};
+            memcpy(next.frame, blademotor_dma_received, BLADEMOTOR_LENGTH_RECEIVED_MSG);
+            next.tick = HAL_GetTick(); next.valid = 1u;
+            next.sequence = blademotor_snapshot.sequence + 1u;
+            blademotor_snapshot = next;
+            blademotor_last_valid_tick = next.tick;
+            blademotor_seen_valid = 1u;
+            blademotor_fault = 0u;
+        } else {
+            /* A controller-error frame has valid framing but is not valid
+             * feedback: it must not refresh the software freshness age. */
+            BLADEMOTOR_u32Error++;
+            blademotor_fault = 1u;
+            MOTORLINK_ForceInhibit();
+            blademotor_recover_rx = 1u;
         }
-  
+    } else {
+        BLADEMOTOR_u32Error++;
+        blademotor_fault = 1u;
+        MOTORLINK_ForceInhibit();
+        blademotor_recover_rx = 1u;
     }
+}
+
+void BLADEMOTOR_OnUartError(void) {
+    blademotor_fault = 1u;
+    MOTORLINK_ForceInhibit();
+    blademotor_rx_armed = 0u;
+    blademotor_recover_rx = 1u;
+    BLADEMOTOR_u32Error++;
+}
+void BLADEMOTOR_OnTxComplete(void) { blademotor_tx_busy = 0u; }
+bool BLADEMOTOR_FeedbackHealthy(void) {
+    return blademotor_seen_valid != 0u && blademotor_fault == 0u &&
+        (uint32_t)(HAL_GetTick() - blademotor_last_valid_tick) <= BLADEMOTOR_FEEDBACK_TIMEOUT_MS;
 }
 
 /******************************************************************************

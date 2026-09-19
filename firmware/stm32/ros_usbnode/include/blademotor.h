@@ -52,6 +52,11 @@ extern uint32_t BLADEMOTOR_u32Error;
 void BLADEMOTOR_Init(void);
 void BLADEMOTOR_App(void);
 void BLADEMOTOR_ReceiveIT(void);
+void BLADEMOTOR_OnUartError(void);
+void BLADEMOTOR_OnTxComplete(void);
+/* Blade status is polled at 100 ms; 350 ms permits three missed polls plus
+ * cooperative-loop jitter, but never treats a stale status as healthy. */
+bool BLADEMOTOR_FeedbackHealthy(void);
 
 void BLADEMOTOR_Set(uint8_t on_off, uint8_t direction);
 
