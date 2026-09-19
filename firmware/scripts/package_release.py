@@ -60,7 +60,7 @@ PERMUTATIONS = [
         "key": "yardforce500b",
         "env": "Yardforce500B",
         "board": "BOARD_YARDFORCE500B",
-        "panel": "PANEL_TYPE_YARDFORCE_500B_CLASSIC",
+        "panel": "PANEL_TYPE_YARDFORCE_900_ECO",
         "mcu": "STM32F401VC",
         "flash_address": "0x08000000",
         "flash_size": 262144,

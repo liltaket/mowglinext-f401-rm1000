@@ -30,6 +30,11 @@ type FirmwareProvider struct {
 	usbUpdater *FirmwareUSBUpdater
 }
 
+// firmwareManifestURLOverride is intentionally limited to the USB-DFU
+// prebuilt-artifact resolver. An empty value preserves the resolver's stable
+// release-manifest default.
+const firmwareManifestURLOverride = "MOWGLI_FIRMWARE_MANIFEST_URL"
+
 func NewFirmwareProvider(db types.IDBProvider, ros types.IRosProvider) *FirmwareProvider {
 	u := &FirmwareProvider{
 		db:  db,
@@ -46,7 +51,9 @@ func NewFirmwareProvider(db types.IDBProvider, ros types.IRosProvider) *Firmware
 			USBObserver:     &LinuxUSBObserver{},
 			DFUTool:         DFUUtilTool{},
 			RuntimeVerifier: bridge,
-			ArtifactSource:  ManifestUSBArtifactSource{},
+			ArtifactSource: ManifestUSBArtifactSource{
+				ManifestURL: os.Getenv(firmwareManifestURLOverride),
+			},
 		}); err == nil {
 			u.usbUpdater = updater
 		}

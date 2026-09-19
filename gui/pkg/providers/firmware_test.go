@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -9,6 +10,46 @@ import (
 	"github.com/mowglinext/mowglinext/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
+
+type firmwareProviderTestROS struct{}
+
+func (firmwareProviderTestROS) CallService(context.Context, string, any, any, ...string) error {
+	return nil
+}
+func (firmwareProviderTestROS) Subscribe(string, string, int, func([]byte)) error { return nil }
+func (firmwareProviderTestROS) UnSubscribe(string, string)                        {}
+func (firmwareProviderTestROS) Publish(string, string, interface{}) error         { return nil }
+func (firmwareProviderTestROS) GetParameters(context.Context, []string) ([]types.RosParameter, error) {
+	return nil, nil
+}
+func (firmwareProviderTestROS) SetParameters(context.Context, []types.RosParameter) ([]types.RosParameter, error) {
+	return nil, nil
+}
+
+func TestNewFirmwareProviderManifestURLOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  string
+	}{
+		{name: "unset keeps resolver default", url: ""},
+		{name: "override is wired to USB manifest source", url: "https://example.test/manifest.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(firmwareManifestURLOverride, tc.url)
+			fp := NewFirmwareProvider(nil, firmwareProviderTestROS{})
+			if fp.usbUpdater == nil {
+				t.Fatal("USB updater was not configured")
+			}
+			source, ok := fp.usbUpdater.d.ArtifactSource.(ManifestUSBArtifactSource)
+			if !ok {
+				t.Fatalf("artifact source type = %T, want ManifestUSBArtifactSource", fp.usbUpdater.d.ArtifactSource)
+			}
+			if source.ManifestURL != tc.url {
+				t.Errorf("manifest URL = %q, want %q", source.ManifestURL, tc.url)
+			}
+		})
+	}
+}
 
 // TestFlashFirmwareRouting exercises the build-mode selector at the FlashFirmware
 // boundary: an unrecognized firmwareSource is rejected before any flash, and the
