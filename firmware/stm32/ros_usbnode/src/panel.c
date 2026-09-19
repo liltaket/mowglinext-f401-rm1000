@@ -37,7 +37,8 @@ uint8_t buttoncleared = 0;
 uint8_t Led_States[LED_STATE_SIZE];
 
 // static uint8_t Key_Pressed;
-static uint8_t Frame_Received_Panel = 0;
+static volatile uint8_t Frame_Received_Panel = 0;
+static volatile uint8_t panel_recover_rx = 0;
 /* per panel type initializers */
 #if PANEL_TYPE == PANEL_TYPE_YARDFORCE_900_ECO
     const uint8_t KEY_INIT_MSG[] = {0x03, 0x90, 0x28};     
@@ -61,6 +62,9 @@ const uint8_t KEY_ACTIVATE[] = {0x0, 0xFF, 0x1};
     #error "No panel type define in board.h"
 #endif      
 static uint8_t panel_pu8ReceivedData[50] = {0};
+/* DMA owns panel_pu8ReceivedData. The ISR validates and publishes a separate
+ * immutable frame so foreground parsing cannot race the next DMA transfer. */
+static uint8_t panel_received_snapshot[PANEL_LENGTH_RECEIVED_MSG] = {0};
 static uint8_t panel_pu8RqstMessage[50]  = {0};
 
 const uint8_t panel_pcu8PreAmbule[5]  = {0x55,0xAA,0x0A,0x50,0x3C};
@@ -253,14 +257,45 @@ void PANEL_Set_LED(uint8_t led, PANEL_LED_STATE state)
  * needs to be called regularly or led states will timeout 
  */
 void PANEL_Tick(void)
-{   
-     if (Frame_Received_Panel == 1)
+{
+#ifdef PANEL_USART_ENABLED
+    if (panel_recover_rx)
+    {
+        panel_recover_rx = 0;
+        (void)HAL_UART_AbortReceive(&PANEL_USART_Handler);
+        __HAL_UART_CLEAR_OREFLAG(&PANEL_USART_Handler);
+        if (HAL_UARTEx_ReceiveToIdle_DMA(&PANEL_USART_Handler,
+                                         panel_pu8ReceivedData,
+                                         PANEL_LENGTH_RECEIVED_MSG) == HAL_OK)
+        {
+            __HAL_DMA_DISABLE_IT(&hdma_uart1_rx, DMA_IT_HT);
+        }
+        else
+        {
+            panel_recover_rx = 1;
+        }
+    }
+#endif
+
+    uint8_t frame[PANEL_LENGTH_RECEIVED_MSG];
+    uint8_t have_frame = 0;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    if (Frame_Received_Panel)
+    {
+        memcpy(frame, panel_received_snapshot, sizeof(frame));
+        Frame_Received_Panel = 0;
+        have_frame = 1;
+    }
+    __set_PRIMASK(primask);
+
+     if (have_frame)
      {
-            if ((panel_pu8ReceivedData[5]&0x1) == 0) // any button pressed
+            if ((frame[5]&0x1) == 0) // any button pressed
             {
                for(int button_byte=0;button_byte < PANEL_BUTTON_BYTES;button_byte++)
                 {
-                    buttonstate[button_byte] = panel_pu8ReceivedData[button_byte+5];//&0x3;
+                    buttonstate[button_byte] = frame[button_byte+5];//&0x3;
                     buttonupdated = 1;
                     buttoncleared = 0;
                 }
@@ -278,7 +313,6 @@ void PANEL_Tick(void)
                 }   
             }
     
-      Frame_Received_Panel=0;
      }
     /* add Start and Home at the end the tab*/
     buttonstate[PANEL_BUTTON_DEF_START] = !HAL_GPIO_ReadPin(PLAY_BUTTON_PORT, PLAY_BUTTON_PIN); // pullup, active low    
@@ -405,6 +439,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
             if(memcmp(panel_pcu8PreAmbule,panel_pu8ReceivedData,5) == 0){
                 uint8_t l_u8crc = crcCalc(panel_pu8ReceivedData,14-1);
                 if(panel_pu8ReceivedData[14-1] == l_u8crc ){
+                    memcpy(panel_received_snapshot, panel_pu8ReceivedData,
+                           PANEL_LENGTH_RECEIVED_MSG);
                     Frame_Received_Panel = 1;
                 }
             }
@@ -412,8 +448,21 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 
 
         /* prepare to receive the next message */
-        HAL_UARTEx_ReceiveToIdle_DMA(&PANEL_USART_Handler,panel_pu8ReceivedData,PANEL_LENGTH_RECEIVED_MSG);
-        __HAL_DMA_DISABLE_IT(&hdma_uart1_rx, DMA_IT_HT);
+        if (HAL_UARTEx_ReceiveToIdle_DMA(&PANEL_USART_Handler,
+                                         panel_pu8ReceivedData,
+                                         PANEL_LENGTH_RECEIVED_MSG) == HAL_OK)
+        {
+            __HAL_DMA_DISABLE_IT(&hdma_uart1_rx, DMA_IT_HT);
+        }
+        else
+        {
+            panel_recover_rx = 1;
+        }
 
 	}
+}
+
+void PANEL_OnUartError(void)
+{
+    panel_recover_rx = 1;
 }

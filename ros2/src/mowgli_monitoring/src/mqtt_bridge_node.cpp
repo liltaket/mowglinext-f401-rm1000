@@ -1085,8 +1085,7 @@ std::string MqttBridgeNode::serialise_status(const mowgli_interfaces::msg::Statu
                 "\"mower_esc_current\":%.3f,"
                 "\"mower_motor_temperature\":%.2f,"
                 "\"mower_motor_rpm\":%.1f,"
-                "\"mower_motor_power_watts\":%.1f,"
-                "\"mower_motor_power_is_measured\":%s"
+                "\"mower_motor_power_watts\":%.1f"
                 "}",
                 static_cast<unsigned>(msg.mower_status),
                 msg.raspberry_pi_power ? "true" : "false",
@@ -1103,8 +1102,7 @@ std::string MqttBridgeNode::serialise_status(const mowgli_interfaces::msg::Statu
                 static_cast<double>(msg.mower_esc_current),
                 static_cast<double>(msg.mower_motor_temperature),
                 static_cast<double>(msg.mower_motor_rpm),
-                static_cast<double>(msg.mower_motor_power_watts),
-                msg.mower_motor_power_is_measured ? "true" : "false");
+                static_cast<double>(msg.mower_motor_power_watts));
   return std::string{buf};
 }
 

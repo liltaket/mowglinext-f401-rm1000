@@ -459,7 +459,6 @@ export type Status = {
   mower_motor_temperature?: number;
   mower_motor_rpm?: number;
   mower_motor_power_watts?: number;
-  mower_motor_power_is_measured?: boolean;
   blade_status_stamp?: { sec: number; nanosec: number };
   firmware_version?: string;
   firmware_protocol_version?: number;

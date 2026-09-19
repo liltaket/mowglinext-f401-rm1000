@@ -63,22 +63,6 @@ TEST(BladeTelemetry, CurrentRangePreservesSubAmpReadings)
   EXPECT_FLOAT_EQ(blade_current_amps(packet), 65.535f);
 }
 
-TEST(BladeTelemetry, Rm1000PowerIsDeciwattsAndCurrentUsesSystemVoltage)
-{
-  LlBladeStatus packet{};
-  packet.power_watts = 387u;  // PAC5223 bytes 9-10: 38.7 W
-
-  EXPECT_FLOAT_EQ(blade_power_watts(packet), 38.7f);
-  EXPECT_NEAR(blade_current_amps_from_power(packet, 23.625f), 38.7f / 23.625f, 1e-5f);
-  EXPECT_FLOAT_EQ(blade_current_amps_from_power(packet, 0.0f), 0.0f);
-}
-
-TEST(ConfigCapabilities, BladePowerDeciwattsDoesNotOverlapHostConfig)
-{
-  EXPECT_EQ(CONFIG_CAPABILITY_BLADE_POWER_DECIWATTS, 0x80u);
-  EXPECT_EQ(CONFIG_CAPABILITY_BLADE_POWER_DECIWATTS & CONFIG_FLAG_FIRMWARE_DEBUG, 0u);
-}
-
 // ---------------------------------------------------------------------------
 // Size checks — ensure packed structs match expected wire sizes
 // ---------------------------------------------------------------------------
@@ -172,6 +156,16 @@ TEST(ProtocolSizes, ConfigPacketSizes)
   // mowgli_protocol.h.
   EXPECT_EQ(sizeof(LlConfigReq), 4u);  // type(1) + flags(1) + crc(2)
   EXPECT_EQ(sizeof(LlConfigRsp), 8u);  // type(1) + proto(1) + flags(1) + semver(3) + crc(2)
+}
+
+TEST(BladeTelemetryContract, RejectsTransitionalRawDeciwattFirmware)
+{
+  EXPECT_TRUE(blade_telemetry_contract_compatible(kMowgliProtocolVersion, 0u));
+  EXPECT_TRUE(
+      blade_telemetry_contract_compatible(kMowgliProtocolVersion, CONFIG_FLAG_FIRMWARE_DEBUG));
+  EXPECT_FALSE(blade_telemetry_contract_compatible(kMowgliProtocolVersion,
+                                                   CONFIG_CAPABILITY_LEGACY_BLADE_POWER_DECIWATTS));
+  EXPECT_FALSE(blade_telemetry_contract_compatible(kMowgliProtocolVersion - 1u, 0u));
 }
 
 // ---------------------------------------------------------------------------

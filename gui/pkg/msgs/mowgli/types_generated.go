@@ -221,7 +221,6 @@ type Status struct {
 	MowerMotorTemperature     float32                        `json:"mower_motor_temperature"`
 	MowerMotorRpm             float32                        `json:"mower_motor_rpm"`
 	MowerMotorPowerWatts      float32                        `json:"mower_motor_power_watts"`
-	MowerMotorPowerIsMeasured bool                           `json:"mower_motor_power_is_measured"`
 	BladeStatusStamp          geometry.Stamp                 `json:"blade_status_stamp"`
 	FirmwareVersion           string                         `json:"firmware_version"`
 	FirmwareProtocolVersion   uint8                          `json:"firmware_protocol_version"`

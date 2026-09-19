@@ -22,6 +22,8 @@
 #include "stm32f_board_hal.h"
 #include "i2c_lis3dh.h"
 
+#define I2C_SENSOR_TIMEOUT_MS 10u
+
 I2C_HandleTypeDef I2C_Handle;
 
 /**
@@ -75,8 +77,9 @@ void I2C_Init(void)
 int32_t I2C_platform_write(void *handle, uint8_t reg, const uint8_t *bufp, uint16_t len)
 {
   reg |= 0x80;
-  HAL_I2C_Mem_Write(handle, LIS3DH_I2C_ADD_L, reg, I2C_MEMADD_SIZE_8BIT, (uint8_t*) bufp, len, 1000);
-  return 0;
+  return HAL_I2C_Mem_Write(handle, LIS3DH_I2C_ADD_L, reg,
+                           I2C_MEMADD_SIZE_8BIT, (uint8_t*) bufp, len,
+                           I2C_SENSOR_TIMEOUT_MS) == HAL_OK ? 0 : -1;
 }
 
 /*
@@ -86,8 +89,9 @@ int32_t I2C_platform_read(void *handle, uint8_t reg, uint8_t *bufp, uint16_t len
 {
   /* Read multiple command */
   reg |= 0x80;
-  HAL_I2C_Mem_Read(handle, LIS3DH_I2C_ADD_L, reg, I2C_MEMADD_SIZE_8BIT, bufp, len, 1000);
-  return 0;
+  return HAL_I2C_Mem_Read(handle, LIS3DH_I2C_ADD_L, reg,
+                          I2C_MEMADD_SIZE_8BIT, bufp, len,
+                          I2C_SENSOR_TIMEOUT_MS) == HAL_OK ? 0 : -1;
 }
 
 /*
@@ -195,8 +199,11 @@ uint8_t I2C_TestZLowINT(void)
     dev_ctx.read_reg = I2C_platform_read;
     dev_ctx.handle = &I2C_Handle;
 
-    lis3dh_int1_src_t int1_src;
-    lis3dh_int1_gen_source_get(&dev_ctx, &int1_src); 
+    lis3dh_int1_src_t int1_src = {0};
+    if (lis3dh_int1_gen_source_get(&dev_ctx, &int1_src) != 0) {
+        /* A missing safety sensor must not be interpreted as "safe". */
+        return 1u;
+    }
     
     return(int1_src.zl && int1_src.ia);
 }

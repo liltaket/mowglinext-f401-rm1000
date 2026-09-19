@@ -60,8 +60,6 @@ namespace mower_msgs
       _mower_motor_rpm_type mower_motor_rpm;
       typedef float _mower_motor_power_watts_type;
       _mower_motor_power_watts_type mower_motor_power_watts;
-      typedef bool _mower_motor_power_is_measured_type;
-      _mower_motor_power_is_measured_type mower_motor_power_is_measured;
       typedef ros::Time _blade_status_stamp_type;
       _blade_status_stamp_type blade_status_stamp;
       typedef const char* _firmware_version_type;
@@ -104,7 +102,6 @@ namespace mower_msgs
       mower_motor_temperature(0),
       mower_motor_rpm(0),
       mower_motor_power_watts(0),
-      mower_motor_power_is_measured(0),
       blade_status_stamp(),
       firmware_version(""),
       firmware_protocol_version(0),
@@ -270,13 +267,6 @@ namespace mower_msgs
       *(outbuffer + offset + 2) = (u_mower_motor_power_watts.base >> (8 * 2)) & 0xFF;
       *(outbuffer + offset + 3) = (u_mower_motor_power_watts.base >> (8 * 3)) & 0xFF;
       offset += sizeof(this->mower_motor_power_watts);
-      union {
-        bool real;
-        uint8_t base;
-      } u_mower_motor_power_is_measured;
-      u_mower_motor_power_is_measured.real = this->mower_motor_power_is_measured;
-      *(outbuffer + offset + 0) = (u_mower_motor_power_is_measured.base >> (8 * 0)) & 0xFF;
-      offset += sizeof(this->mower_motor_power_is_measured);
       offset += this->blade_status_stamp.serialize(outbuffer + offset);
       uint32_t length_firmware_version = strlen(this->firmware_version);
       varToArr(outbuffer + offset, length_firmware_version);
@@ -474,14 +464,6 @@ namespace mower_msgs
       u_mower_motor_power_watts.base |= ((uint32_t) (*(inbuffer + offset + 3))) << (8 * 3);
       this->mower_motor_power_watts = u_mower_motor_power_watts.real;
       offset += sizeof(this->mower_motor_power_watts);
-      union {
-        bool real;
-        uint8_t base;
-      } u_mower_motor_power_is_measured;
-      u_mower_motor_power_is_measured.base = 0;
-      u_mower_motor_power_is_measured.base |= ((uint8_t) (*(inbuffer + offset + 0))) << (8 * 0);
-      this->mower_motor_power_is_measured = u_mower_motor_power_is_measured.real;
-      offset += sizeof(this->mower_motor_power_is_measured);
       offset += this->blade_status_stamp.deserialize(inbuffer + offset);
       uint32_t length_firmware_version;
       arrToVar(length_firmware_version, (inbuffer + offset));
@@ -506,7 +488,7 @@ namespace mower_msgs
     }
 
     virtual const char * getType() override { return "mower_msgs/Status"; };
-    virtual const char * getMD5() override { return "4b264a9c052de8e6379d3f66b1685ea4"; };
+    virtual const char * getMD5() override { return "42e3f306d086eea6c42c1784aefe9857"; };
 
   };
 

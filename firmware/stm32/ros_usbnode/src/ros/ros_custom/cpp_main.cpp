@@ -23,6 +23,7 @@
 #include "main.h"
 
 #include "blademotor.h"
+#include "blade_telemetry_normalization.hpp"
 #include "charger.h"
 #include "drivemotor.h"
 #include "emergency.h"
@@ -123,6 +124,16 @@ static int16_t right_pwm_signed = 0;
  * added to the open-loop feedforward below. */
 static PID left_wheel_pid;
 static PID right_wheel_pid;
+struct PendingDrivePidConfig {
+  float ticks_per_meter;
+  float kp;
+  float ki;
+  float kd;
+  float integral_limit;
+  float pwm_per_mps;
+};
+static PendingDrivePidConfig pending_drive_pid_config{};
+static volatile uint8_t pending_drive_pid_valid = 0u;
 static int32_t prev_left_ticks_signed_pi = 0;
 static int32_t prev_right_ticks_signed_pi = 0;
 static float prev_left_target_mps = 0.0f;
@@ -236,6 +247,16 @@ static volatile float g_wheel_base = (float)WHEEL_BASE;
 #define YAW_GYRO_LP_ALPHA 0.30f
 #define YAW_TRIM_SLEW_MPS_PER_CYCLE 0.03f
 static PID yaw_pid;
+struct PendingYawPidConfig {
+  float kp;
+  float ki;
+  float trim_limit_mps;
+  float gyro_sign;
+  float gyro_bias_radps;
+  uint8_t enabled;
+};
+static PendingYawPidConfig pending_yaw_pid_config{};
+static volatile uint8_t pending_yaw_pid_valid = 0u;
 static float prev_yaw_trim_mps = 0.0f;
 static float prev_applied_yaw_trim_mps = 0.0f; /* last trim actually injected (slew-limit state) */
 static float yaw_gyro_filt = 0.0f;             /* low-passed gyro yaw rate [rad/s] */
@@ -296,9 +317,7 @@ static volatile bool heartbeat_only_latch = false;
 /* Any physical safety sensor currently asserted? Firmware is the sole safety
  * authority; this gates every automatic emergency clear. */
 static inline bool any_physical_emergency(void) {
-  return Emergency_StopButtonYellow() || Emergency_StopButtonWhite() ||
-         Emergency_WheelLiftBlue() || Emergency_WheelLiftRed() ||
-         Emergency_Tilt() || Emergency_LowZAccelerometer();
+  return Emergency_PhysicalActive() != 0u;
 }
 
 /* ---------------------------------------------------------------------------
@@ -508,23 +527,12 @@ static void on_set_drive_pid(const uint8_t *data, size_t len) {
   const float ilim = pid_constrain(pkt->integral_limit, 0.0f, 255.0f);
   const float ff = pid_constrain(pkt->pwm_per_mps, 50.0f, 600.0f);
 
-  /* Apply atomically w.r.t. motors_handler(), which reads these objects in the
-   * main loop at 50 Hz: this handler runs in USB RX interrupt context, and a
-   * half-applied update (e.g. new gains but the old integral limit) could let
-   * the ki integrator wind up unbounded for one cycle. Same __disable_irq
-   * guard motors_handler uses for its setpoint snapshot. setOutputLimit is
-   * re-asserted here so the ±255 clamp never silently depends on init_ROS
-   * having run first (the PX4 PID default-inits _limit_output to 0). */
-  __disable_irq();
-  left_wheel_pid.setGains(kp, ki, kd);
-  left_wheel_pid.setIntegralLimit(ilim);
-  left_wheel_pid.setOutputLimit(255.0f);
-  right_wheel_pid.setGains(kp, ki, kd);
-  right_wheel_pid.setIntegralLimit(ilim);
-  right_wheel_pid.setOutputLimit(255.0f);
-  DRIVEMOTOR_SetTicksPerMeter(ticks_per_meter);
-  g_pwm_per_mps = ff;
-  __enable_irq();
+  /* USB RX runs in interrupt context. Publish a complete validated update and
+   * let motors_handler apply it at the next 50 Hz foreground boundary; never
+   * mutate a PID object while its update() method is in progress. */
+  pending_drive_pid_config =
+      {ticks_per_meter, kp, ki, kd, ilim, ff};
+  pending_drive_pid_valid = 1u;
 
   /* Do not log successful drive-PID updates here: this handler runs in the USB
    * RX path and hardware_bridge intentionally re-sends the packet in bursts
@@ -561,19 +569,8 @@ static void on_set_yaw_pid(const uint8_t *data, size_t len) {
    * below bounds the yaw correction regardless. */
   const float bias = pid_constrain(pkt->gyro_bias_radps, -0.5f, 0.5f);
 
-  /* Apply atomically w.r.t. motors_handler() (reads these at 50 Hz); this
-   * handler runs in USB RX interrupt context. The integral limit is pinned to
-   * the trim limit so the integrator alone can never exceed the differential
-   * clamp. Same __disable_irq guard as on_set_drive_pid. */
-  __disable_irq();
-  yaw_pid.setGains(kp, ki, 0.0f);
-  yaw_pid.setIntegralLimit(tl * YAW_INT_LIMIT_FRAC);
-  yaw_pid.setOutputLimit(tl);
-  g_yaw_trim_limit_mps = tl;
-  g_yaw_gyro_sign = sign;
-  g_yaw_gyro_bias = bias;
-  g_yaw_loop_enabled = en;
-  __enable_irq();
+  pending_yaw_pid_config = {kp, ki, tl, sign, bias, en};
+  pending_yaw_pid_valid = 1u;
 }
 
 static void on_set_kinematics(const uint8_t *data, size_t len) {
@@ -597,10 +594,11 @@ static void on_set_kinematics(const uint8_t *data, size_t len) {
 
   const float wb = pid_constrain(pkt->wheel_base, 0.15f, 0.60f);
 
+  const uint32_t primask = __get_PRIMASK();
   __disable_irq();
   DRIVEMOTOR_SetMaxMps(pkt->max_mps); /* clamps to (0, MAX_MPS] internally */
   g_wheel_base = wb;
-  __enable_irq();
+  __set_PRIMASK(primask);
 }
 
 static void on_set_safety_limits(const uint8_t *data, size_t len) {
@@ -739,9 +737,6 @@ static void on_config_req(const uint8_t *data, size_t len) {
   rsp.type = PKT_ID_CONFIG_RSP;
   rsp.protocol_version = MOWGLI_PROTOCOL_VERSION;
   rsp.active_flags = g_firmware_debug_enabled != 0u ? CONFIG_FLAG_FIRMWARE_DEBUG : 0u;
-#if defined(BLADEMOTOR_TELEMETRY_POWER_DECIWATTS)
-  rsp.active_flags |= CONFIG_CAPABILITY_BLADE_POWER_DECIWATTS;
-#endif
   rsp.fw_version_major = MOWGLI_FW_VERSION_MAJOR;
   rsp.fw_version_minor = MOWGLI_FW_VERSION_MINOR;
   rsp.fw_version_patch = MOWGLI_FW_VERSION_PATCH;
@@ -857,7 +852,53 @@ static bool antidig_step(uint32_t *stall_ms, int32_t *stall_ticks,
  * ---------------------------------------------------------------------------*/
 extern "C" void motors_handler() {
   if (NBT_handler(&motors_nbt)) {
+    PendingDrivePidConfig drive_config{};
+    PendingYawPidConfig yaw_config{};
+    uint8_t apply_drive_config = 0u;
+    uint8_t apply_yaw_config = 0u;
+
+    /* Take each staged USB update exactly once, then apply it here where no PID
+     * update can be half-complete. Preserve PRIMASK rather than unconditionally
+     * enabling interrupts. */
+    const uint32_t config_primask = __get_PRIMASK();
+    __disable_irq();
+    if (pending_drive_pid_valid) {
+      drive_config = pending_drive_pid_config;
+      pending_drive_pid_valid = 0u;
+      apply_drive_config = 1u;
+    }
+    if (pending_yaw_pid_valid) {
+      yaw_config = pending_yaw_pid_config;
+      pending_yaw_pid_valid = 0u;
+      apply_yaw_config = 1u;
+    }
+    __set_PRIMASK(config_primask);
+
+    if (apply_drive_config) {
+      left_wheel_pid.setGains(drive_config.kp, drive_config.ki,
+                              drive_config.kd);
+      left_wheel_pid.setIntegralLimit(drive_config.integral_limit);
+      left_wheel_pid.setOutputLimit(255.0f);
+      right_wheel_pid.setGains(drive_config.kp, drive_config.ki,
+                               drive_config.kd);
+      right_wheel_pid.setIntegralLimit(drive_config.integral_limit);
+      right_wheel_pid.setOutputLimit(255.0f);
+      DRIVEMOTOR_SetTicksPerMeter(drive_config.ticks_per_meter);
+      g_pwm_per_mps = drive_config.pwm_per_mps;
+    }
+    if (apply_yaw_config) {
+      yaw_pid.setGains(yaw_config.kp, yaw_config.ki, 0.0f);
+      yaw_pid.setIntegralLimit(yaw_config.trim_limit_mps *
+                               YAW_INT_LIMIT_FRAC);
+      yaw_pid.setOutputLimit(yaw_config.trim_limit_mps);
+      g_yaw_trim_limit_mps = yaw_config.trim_limit_mps;
+      g_yaw_gyro_sign = yaw_config.gyro_sign;
+      g_yaw_gyro_bias = yaw_config.gyro_bias_radps;
+      g_yaw_loop_enabled = yaw_config.enabled;
+    }
+
     /* Snapshot ISR-written variables under interrupt lock */
+    const uint32_t snapshot_primask = __get_PRIMASK();
     __disable_irq();
     float snap_left_target = left_target_mps;
     float snap_right_target = right_target_mps;
@@ -867,7 +908,7 @@ extern "C" void motors_handler() {
     uint32_t snap_cmd_vel = last_cmd_vel_tick;
     float snap_ticks_per_meter = DRIVEMOTOR_GetTicksPerMeter();
     uint32_t snap_host_zero_sequence = host_zero_phase_sequence;
-    __enable_irq();
+    __set_PRIMASK(snapshot_primask);
 
     const bool motor_link_healthy = DRIVEMOTOR_FeedbackHealthy() &&
                                     BLADEMOTOR_FeedbackHealthy();
@@ -937,6 +978,11 @@ extern "C" void motors_handler() {
         blade_on_off = 0;
       }
     }
+
+    DRIVEMOTOR_SetSupervisorStop(
+        (hard_stop || (snap_left_target == 0.0f && snap_right_target == 0.0f))
+            ? 1u
+            : 0u);
 
     /* --- Option C: gyro-local closed yaw-rate loop ---
      * Regulate (commanded wz − measured gyro wz) and fold the output in as a
@@ -1482,6 +1528,17 @@ extern "C" void broadcast_handler() {
 
   // Blade motor status (4 Hz) — only after system has initialized
   if (last_heartbeat_tick != 0u && nbt_due(&blade_nbt, now_tick)) {
+    const bool blade_feedback_healthy = BLADEMOTOR_FeedbackHealthy();
+    if (!blade_feedback_healthy) {
+      /* Silence is intentional validity signalling on the legacy fixed wire
+       * packet: the host expires the last sample to DISCONNECTED and zeroes
+       * RPM/current/power. Sending synthetic zeroes here would look fresh and
+       * could be mistaken for proof that the blade controller reported stop. */
+      nbt_consume(&blade_nbt, now_tick);
+      WATCHDOG_SetMainLoopStage(WATCHDOG_STAGE_BROADCAST_EXIT);
+      return;
+    }
+
     const uint32_t blade_wire_bytes =
         usb_cdc_framed_packet_size(sizeof(pkt_blade_status_t));
     if (!usb_cdc_should_send_telemetry_packet(blade_wire_bytes)) {
@@ -1495,7 +1552,13 @@ extern "C" void broadcast_handler() {
     blade_pkt.type = PKT_ID_BLADE_STATUS;
     blade_pkt.is_active = BLADEMOTOR_bActivated ? 1u : 0u;
     blade_pkt.rpm = BLADEMOTOR_u16RPM;
+#if defined(BLADEMOTOR_TELEMETRY_POWER_DECIWATTS)
+    blade_pkt.power_watts =
+        mowgli_blade_telemetry::deciwatts_to_milliamps(BLADEMOTOR_u16Power,
+                                                        battery_voltage);
+#else
     blade_pkt.power_watts = BLADEMOTOR_u16Power;
+#endif
     blade_pkt.temperature = blade_temperature;
     blade_pkt.error_count = BLADEMOTOR_u32Error;
     WATCHDOG_SetMainLoopStage(WATCHDOG_STAGE_BROADCAST_BLADE_SEND);

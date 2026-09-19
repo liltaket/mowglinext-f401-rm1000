@@ -114,7 +114,6 @@ TEST(SerialiseStatus, ProducesExpectedJson)
   msg.mower_motor_temperature = 60.75f;
   msg.mower_motor_rpm = 3000.5f;
   msg.mower_motor_power_watts = 38.7f;
-  msg.mower_motor_power_is_measured = true;
 
   const std::string json = MqttBridgeNode::serialise_status(msg);
 
@@ -125,8 +124,7 @@ TEST(SerialiseStatus, ProducesExpectedJson)
             "\"mower_esc_status\":2,\"mower_esc_error_count\":7,"
             "\"mower_esc_temperature\":45.50,"
             "\"mower_esc_current\":1.250,\"mower_motor_temperature\":60.75,"
-            "\"mower_motor_rpm\":3000.5,\"mower_motor_power_watts\":38.7,"
-            "\"mower_motor_power_is_measured\":true}");
+            "\"mower_motor_rpm\":3000.5,\"mower_motor_power_watts\":38.7}");
 }
 
 // ===========================================================================

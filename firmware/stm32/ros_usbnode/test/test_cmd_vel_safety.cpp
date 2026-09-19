@@ -3,6 +3,7 @@
 #include <unity.h>
 
 #include "cmd_vel_safety.hpp"
+#include "blade_telemetry_normalization.hpp"
 #include "imu/imu_mount_transform.h"
 
 using mowgli_cmd_vel::SafetyState;
@@ -88,6 +89,16 @@ static void test_imu_mount_rotation_yaw_180_negates_x_y_only()
   TEST_ASSERT_FLOAT_WITHIN(0.0f, 3.0f, z);
 }
 
+static void test_blade_power_normalizes_to_shared_milliamp_contract()
+{
+  using mowgli_blade_telemetry::deciwatts_to_milliamps;
+  TEST_ASSERT_EQUAL_UINT16(1638u, deciwatts_to_milliamps(387u, 23.625f));
+  TEST_ASSERT_EQUAL_UINT16(0u, deciwatts_to_milliamps(387u, 0.0f));
+  TEST_ASSERT_EQUAL_UINT16(
+      0u, deciwatts_to_milliamps(387u, std::numeric_limits<float>::quiet_NaN()));
+  TEST_ASSERT_EQUAL_UINT16(65535u, deciwatts_to_milliamps(65535u, 1.01f));
+}
+
 int main()
 {
   UNITY_BEGIN();
@@ -96,5 +107,6 @@ int main()
   RUN_TEST(test_valid_command_after_invalid_is_normal);
   RUN_TEST(test_imu_mount_rotation_identity_preserves_all_axes);
   RUN_TEST(test_imu_mount_rotation_yaw_180_negates_x_y_only);
+  RUN_TEST(test_blade_power_normalizes_to_shared_milliamp_contract);
   return UNITY_END();
 }

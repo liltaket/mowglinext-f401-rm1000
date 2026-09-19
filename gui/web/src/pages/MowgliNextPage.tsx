@@ -88,7 +88,6 @@ function useMowerData() {
     current: power.charge_current ?? 0,
     bladeCurrent: status.mower_esc_current ?? 0,
     bladePowerWatts: status.mower_motor_power_watts ?? 0,
-    bladePowerMeasured: status.mower_motor_power_is_measured ?? false,
     rpm: status.mower_motor_rpm ?? 0,
     escTemp: status.mower_esc_temperature ?? 0,
     motorTemp: status.mower_motor_temperature ?? 0,
@@ -566,9 +565,7 @@ function LiveMapCard({polygons, progress, robot, dock, coverage, height = 220, o
 
 function TilesRow({data}: {data: ReturnType<typeof useMowerData>}) {
   const {t} = useTranslation();
-  const bladeHint = data.bladePowerMeasured
-    ? `${data.bladePowerWatts.toFixed(1)} W · ${data.bladeCurrent.toFixed(1)} A est.`
-    : `${data.bladeCurrent.toFixed(1)} A`;
+  const bladeHint = `${data.bladeCurrent.toFixed(1)} A · ${data.bladePowerWatts.toFixed(1)} W`;
   return (
     <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10}}>
       <StatTile label="GPS" value={`${Math.round(data.gps)}`} unit="%"

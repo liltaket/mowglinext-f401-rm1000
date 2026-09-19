@@ -80,6 +80,9 @@ bool DRIVEMOTOR_FeedbackHealthy(void);
  */
 void DRIVEMOTOR_SetSpeedSigned(int16_t left_pwm_signed,
                                int16_t right_pwm_signed);
+/* Supervisor intent gate for autonomous collision reverse. Set for IDLE,
+ * watchdog/emergency hard-stop, or an explicit zero velocity target. */
+void DRIVEMOTOR_SetSupervisorStop(uint8_t stop_requested);
 void DRIVEMOTOR_SetTicksPerMeter(float ticks_per_meter);
 float DRIVEMOTOR_GetTicksPerMeter(void);
 /* Runtime max wheel-speed cap. The setter clamps to (0, compile-time MAX_MPS];

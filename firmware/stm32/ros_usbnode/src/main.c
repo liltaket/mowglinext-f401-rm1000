@@ -1424,6 +1424,12 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   {
     DRIVEMOTOR_OnUartError();
   }
+#ifdef PANEL_USART_ENABLED
+  else if (huart->Instance == PANEL_USART_INSTANCE)
+  {
+    PANEL_OnUartError();
+  }
+#endif
 }
 
 /*

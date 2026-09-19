@@ -454,7 +454,12 @@ void BLADEMOTOR_ReceiveIT(void)
 {
     /* decode the frame */
     blademotor_rx_armed = 0u;
-    if(memcmp(blademotor_pcu8Preamble, blademotor_dma_received, 2) == 0){
+    /* Match framing and the telemetry response class, but do not hard-code the
+     * controller's length byte here: PAC variants have been observed with
+     * different declared lengths while keeping the same 0x02/0xD0 identity. */
+    if(memcmp(blademotor_pcu8Preamble, blademotor_dma_received, 2) == 0 &&
+       blademotor_dma_received[3] == blademotor_pcu8Preamble[3] &&
+       blademotor_dma_received[4] == blademotor_pcu8Preamble[4]){
         uint8_t l_u8crc = crcCalc(blademotor_dma_received, BLADEMOTOR_LENGTH_RECEIVED_MSG-1);
 
         if(blademotor_dma_received[BLADEMOTOR_LENGTH_RECEIVED_MSG-1] == l_u8crc &&

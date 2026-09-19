@@ -686,7 +686,7 @@
     "motorRpm": "RPM moteur",
     "bladeErrorCount": "Erreurs télémétrie lame",
     "bladePower": "Puissance lame",
-    "bladeCurrentEstimate": "Courant lame (estimé)",
+    "bladeCurrent": "Courant lame",
     "rpiPower": "Alim. RPi",
     "escPower": "Alim. ESC",
     "uiBoard": "Carte UI",

@@ -686,7 +686,7 @@
     "motorRpm": "Motor RPM",
     "bladeErrorCount": "Blade telemetry errors",
     "bladePower": "Blade Power",
-    "bladeCurrentEstimate": "Blade Current (estimated)",
+    "bladeCurrent": "Blade Current",
     "rpiPower": "RPi Power",
     "escPower": "ESC Power",
     "uiBoard": "UI Board",

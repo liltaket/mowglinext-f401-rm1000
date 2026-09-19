@@ -25,9 +25,47 @@ Existing fork branches were preserved. `origin` points to the fork and
 - Mower under investigation: Biltema RM1000.
 - The closest known MowgliNext profile is YardForce 500B / STM32F401VC.
 - Custom firmware has reportedly been used previously.
-- No RM1000-specific pinout, motor protocol, frame length, command-byte or
-  ADC-temperature wiring difference is treated as established yet.
-- This task performs no flashing or physical mower test.
+- The initial software-only baseline below has now been followed by controlled
+  physical HIL. The dated update is authoritative where it supersedes an older
+  `Hardware validation: false` statement.
+
+## Physical HIL update — 2026-09-19
+
+The cutting blade was removed, wheels were raised/secured, and ROS/GUI were
+stopped during direct COBS tests. OpenOCD with `reset_config none` identified
+device `0x00016423`, 256 KiB flash, and repeatedly completed programming,
+verification, and reset without an NRST connection. `st-flash` is not accepted
+for this board because it reproduced partial writes.
+
+Observed on the RM-MB V6.1 hardware:
+
+- generic F401 fixes were required for non-blocking SWO, a real USB D+
+  disconnect on warm reset, and the PC2/ADC1_IN12 blade-temperature input;
+- the RM1000-specific profile uses the Yardforce 900 ECO panel selection and a
+  PAC5223 startup sequence with PE14 reset, PD11 active-low inverter power,
+  `0x81` forward, `0xC1` reverse, `0x02` stop, and 20 ms polling;
+- both drive controllers worked together and separately, with tick-derived
+  average speeds close to 0.10–0.12 m/s commands;
+- a simultaneous 30 s test produced 949/948 wheel ticks and a stable blade
+  mean of 3484.6 rpm; all 6832 decoded USB frames were CRC-valid and the blade
+  controller error count stayed zero;
+- stable blade load was roughly 376–394 raw units at about 23.6 V. Prior known-
+  good firmware identifies this PAC field as 0.1 W; the follow-up code therefore
+  converts it inside RM1000 firmware to the shared milliamp wire contract. This
+  conversion and its GUI presentation still require HIL on the new image;
+- MPU-6050 X/Y inversion and unchanged Z were physically confirmed for Bruno's
+  installation. The transform remains an explicit
+  `BiltemaRM1000_MPU6050_Yaw180` build variant, not a generic board property;
+- the PAC response used by this firmware was consistently a CRC-valid 16-byte
+  frame. No UART ORE was observed, but recovery is now hardened because a
+  single future ORE must not permanently stop telemetry;
+- lift protection tripped and latched during the first motor setup, and the
+  automatic stop path returned wheel and blade telemetry to zero.
+
+Full raw captures, decoded JSONL, build/flash logs, and hashes are retained in
+the external HIL evidence directory. The currently built follow-up image has
+not been flashed: the mower was powered down for the evening, so all changes
+after the physical run are build/test evidence only until the next session.
 
 ## Findings
 
