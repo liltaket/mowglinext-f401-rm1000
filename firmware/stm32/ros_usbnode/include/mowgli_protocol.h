@@ -284,6 +284,10 @@ extern "C" {
 
 /** Optional firmware diagnostics / fine-grained breadcrumbs enabled. */
 #define CONFIG_FLAG_FIRMWARE_DEBUG (1u << 0u)
+/* Report-only capability in pkt_config_rsp_t::active_flags.  It is never
+ * accepted from the host in pkt_config_req_t.  Boards without this capability
+ * retain the legacy interpretation of pkt_blade_status_t::power_watts. */
+#define CONFIG_CAPABILITY_BLADE_POWER_DECIWATTS (1u << 7u)
 
 /* ---------------------------------------------------------------------------
  * Packed wire-format structs
@@ -595,7 +599,7 @@ typedef struct {
   uint8_t type;         /**< PKT_ID_BLADE_STATUS */
   uint8_t is_active;    /**< 1=running, 0=stopped */
   uint16_t rpm;         /**< Blade motor RPM */
-  uint16_t power_watts; /**< ESC current [mA]; legacy field name, not watts */
+  uint16_t power_watts; /**< Board-declared raw blade telemetry; see CONFIG_CAPABILITY_BLADE_POWER_DECIWATTS */
   float temperature;    /**< Blade/motor temperature [C] */
   uint32_t error_count; /**< Cumulative error counter */
   uint16_t crc;         /**< CRC-16 CCITT over preceding bytes */
@@ -626,8 +630,8 @@ typedef struct {
  *
  * Reports the firmware's wire-protocol version (MOWGLI_PROTOCOL_VERSION — the
  * compatibility key the host compares against its own), the currently-active
- * runtime config flags, and the human-readable firmware semantic version. Sent
- * in reply to PKT_ID_CONFIG_REQ.
+ * runtime config flags plus report-only CONFIG_CAPABILITY_* bits, and the
+ * human-readable firmware semantic version. Sent in reply to PKT_ID_CONFIG_REQ.
  *
  * Wire size: 8 bytes (must match sizeof(LlConfigRsp) in ll_datatypes.hpp).
  */

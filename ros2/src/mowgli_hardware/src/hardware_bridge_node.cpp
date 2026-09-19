@@ -149,6 +149,7 @@ static const char* high_level_mode_name(const uint8_t mode)
 #include "mowgli_interfaces/msg/absolute_pose.hpp"
 #include "mowgli_interfaces/msg/dig_event.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
+#include "mowgli_interfaces/msg/esc_status.hpp"
 #include "mowgli_interfaces/msg/gnss_status.hpp"
 #include "mowgli_interfaces/msg/high_level_status.hpp"
 #include "mowgli_interfaces/msg/power.hpp"
@@ -1514,6 +1515,15 @@ private:
     LlStatus pkt{};
     std::memcpy(&pkt, data, sizeof(LlStatus));
 
+    // RM1000 declares its blade field as electrical power.  Recalculate the
+    // clearly-labelled current estimate from each fresh system-voltage sample;
+    // legacy boards retain their direct ESC-current value.
+    latest_system_voltage_ = pkt.v_system;
+    if (blade_power_is_measured_ && latest_system_voltage_ > 0.0f)
+    {
+      blade_esc_current_ = blade_power_watts_ / latest_system_voltage_;
+    }
+
     const auto stamp = now();
 
     // ---- Status message ----
@@ -1597,11 +1607,18 @@ private:
       // Blade motor fields from live telemetry
       msg.mow_enabled = mow_enabled_;
       msg.firmware_debug_enabled = firmware_debug_enabled_;
-      msg.mower_esc_status = blade_active_ ? 1u : 0u;
+      // Status.msg historically uses 0 for off. When active, publish the
+      // interface-defined value so Diagnostics does not render the old raw
+      // boolean value 1 as an unknown ESC status.
+      msg.mower_esc_status =
+          blade_active_ ? mowgli_interfaces::msg::ESCStatus::ESC_STATUS_RUNNING : 0u;
+      msg.mower_esc_error_count = blade_error_count_;
       msg.mower_motor_rpm = blade_rpm_;
       msg.blade_status_stamp = blade_status_time_;
       msg.mower_motor_temperature = blade_temperature_;
       msg.mower_esc_current = blade_esc_current_;
+      msg.mower_motor_power_watts = blade_power_watts_;
+      msg.mower_motor_power_is_measured = blade_power_is_measured_;
       // Firmware version handshake result (image <-> firmware compatibility).
       msg.firmware_version = fw_version_str_;
       msg.firmware_protocol_version = fw_protocol_version_;
@@ -2814,7 +2831,19 @@ private:
     blade_rpm_ = static_cast<float>(pkt.rpm);
     blade_status_time_ = now();
     blade_temperature_ = pkt.temperature;
-    blade_esc_current_ = blade_current_amps(pkt);
+    blade_error_count_ = pkt.error_count;
+    if (blade_power_is_measured_)
+    {
+      blade_power_watts_ = blade_power_watts(pkt);
+      blade_esc_current_ = blade_current_amps_from_power(pkt, latest_system_voltage_);
+    }
+    else
+    {
+      // Preserve the generic Yardforce wire interpretation until physical HIL
+      // proves a board-specific alternative.
+      blade_power_watts_ = 0.0f;
+      blade_esc_current_ = blade_current_amps(pkt);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2838,6 +2867,15 @@ private:
 
     fw_protocol_version_ = pkt.protocol_version;
     firmware_debug_enabled_ = (pkt.active_flags & CONFIG_FLAG_FIRMWARE_DEBUG) != 0u;
+    const bool blade_power_capability =
+        (pkt.active_flags & CONFIG_CAPABILITY_BLADE_POWER_DECIWATTS) != 0u;
+    if (blade_power_is_measured_ != blade_power_capability)
+    {
+      // Do not relabel a sample decoded before the explicit capability reply.
+      blade_power_watts_ = 0.0f;
+      blade_esc_current_ = 0.0f;
+    }
+    blade_power_is_measured_ = blade_power_capability;
     firmware_debug_requested_ = firmware_debug_enabled_;
     config_control_resend_count_ = 0;
     fw_version_major_ = pkt.fw_version_major;
@@ -2902,6 +2940,10 @@ private:
     fw_compatible_ = false;
     fw_protocol_version_ = 0u;
     fw_version_str_.clear();
+    blade_power_is_measured_ = false;
+    blade_power_watts_ = 0.0f;
+    blade_esc_current_ = 0.0f;
+    blade_error_count_ = 0u;
     config_req_resend_count_ = 5;
     config_control_resend_count_ = 0;
     fw_handshake_start_ = now();
@@ -3917,6 +3959,7 @@ private:
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr min_lin_vel_cb_handle_;
   bool mow_enabled_{false};
   bool is_charging_{false};
+  float latest_system_voltage_{0.0f};
   uint8_t current_mode_{0};
   std::string current_mode_state_name_{"UNSET"};
   uint8_t last_sent_mode_{255};
@@ -3936,6 +3979,9 @@ private:
   rclcpp::Time blade_status_time_{0, 0, RCL_ROS_TIME};
   float blade_temperature_{0.0f};
   float blade_esc_current_{0.0f};
+  float blade_power_watts_{0.0f};
+  bool blade_power_is_measured_{false};
+  uint32_t blade_error_count_{0u};
   uint8_t last_reset_cause_{RESET_CAUSE_UNKNOWN};
   std::string last_reset_cause_name_{"UNKNOWN"};
   bool reset_cause_seen_{false};

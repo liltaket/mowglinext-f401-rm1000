@@ -215,10 +215,13 @@ type Status struct {
 	DigEscalatedDistanceM     float32                        `json:"dig_escalated_distance_m"`
 	DigEscalatedRequiredDistanceM float32                        `json:"dig_escalated_required_distance_m"`
 	MowerEscStatus            uint8                          `json:"mower_esc_status"`
+	MowerEscErrorCount        uint32                         `json:"mower_esc_error_count"`
 	MowerEscTemperature       float32                        `json:"mower_esc_temperature"`
 	MowerEscCurrent           float32                        `json:"mower_esc_current"`
 	MowerMotorTemperature     float32                        `json:"mower_motor_temperature"`
 	MowerMotorRpm             float32                        `json:"mower_motor_rpm"`
+	MowerMotorPowerWatts      float32                        `json:"mower_motor_power_watts"`
+	MowerMotorPowerIsMeasured bool                           `json:"mower_motor_power_is_measured"`
 	BladeStatusStamp          geometry.Stamp                 `json:"blade_status_stamp"`
 	FirmwareVersion           string                         `json:"firmware_version"`
 	FirmwareProtocolVersion   uint8                          `json:"firmware_protocol_version"`

@@ -87,6 +87,8 @@ function useMowerData() {
     // separate so the Blades tile doesn't read the charger.
     current: power.charge_current ?? 0,
     bladeCurrent: status.mower_esc_current ?? 0,
+    bladePowerWatts: status.mower_motor_power_watts ?? 0,
+    bladePowerMeasured: status.mower_motor_power_is_measured ?? false,
     rpm: status.mower_motor_rpm ?? 0,
     escTemp: status.mower_esc_temperature ?? 0,
     motorTemp: status.mower_motor_temperature ?? 0,
@@ -564,12 +566,15 @@ function LiveMapCard({polygons, progress, robot, dock, coverage, height = 220, o
 
 function TilesRow({data}: {data: ReturnType<typeof useMowerData>}) {
   const {t} = useTranslation();
+  const bladeHint = data.bladePowerMeasured
+    ? `${data.bladePowerWatts.toFixed(1)} W · ${data.bladeCurrent.toFixed(1)} A est.`
+    : `${data.bladeCurrent.toFixed(1)} A`;
   return (
     <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10}}>
       <StatTile label="GPS" value={`${Math.round(data.gps)}`} unit="%"
                 hint={data.gpsLabel} accent="cyan" icon={<Wifi size={14}/>}/>
       <StatTile label={t('mowgliNextPage.blades')} value={data.rpm > 0 ? Math.round(data.rpm).toString() : t('mowgliNextPage.bladesOff')}
-                unit={data.rpm > 0 ? 'rpm' : ''} hint={`${data.bladeCurrent.toFixed(1)} A`}
+                unit={data.rpm > 0 ? 'rpm' : ''} hint={bladeHint}
                 accent="amber" icon={<Sparkles size={14}/>}/>
       <StatTile label={t('mowgliNextPage.motor')} value={data.motorTemp.toFixed(0)} unit="°c"
                 hint={`ESC ${data.escTemp.toFixed(0)} °C`}

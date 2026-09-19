@@ -739,6 +739,9 @@ static void on_config_req(const uint8_t *data, size_t len) {
   rsp.type = PKT_ID_CONFIG_RSP;
   rsp.protocol_version = MOWGLI_PROTOCOL_VERSION;
   rsp.active_flags = g_firmware_debug_enabled != 0u ? CONFIG_FLAG_FIRMWARE_DEBUG : 0u;
+#if defined(BLADEMOTOR_TELEMETRY_POWER_DECIWATTS)
+  rsp.active_flags |= CONFIG_CAPABILITY_BLADE_POWER_DECIWATTS;
+#endif
   rsp.fw_version_major = MOWGLI_FW_VERSION_MAJOR;
   rsp.fw_version_minor = MOWGLI_FW_VERSION_MINOR;
   rsp.fw_version_patch = MOWGLI_FW_VERSION_PATCH;

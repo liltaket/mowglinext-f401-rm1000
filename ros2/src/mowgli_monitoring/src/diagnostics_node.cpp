@@ -691,8 +691,16 @@ diagnostic_msgs::msg::DiagnosticStatus DiagnosticsNode::check_motors() const
   status.values.push_back(kv("esc_temperature_c", fmt_float(esc_temp, 1)));
   status.values.push_back(kv("motor_temperature_c", fmt_float(motor_temp, 1)));
   status.values.push_back(kv("mower_esc_status", std::to_string(s.mower_esc_status)));
+  status.values.push_back(kv("mower_esc_error_count", std::to_string(s.mower_esc_error_count)));
   status.values.push_back(
       kv("mower_esc_current_a", fmt_float(static_cast<double>(s.mower_esc_current), 2)));
+  if (s.mower_motor_power_is_measured)
+  {
+    status.values.push_back(
+        kv("mower_motor_power_w", fmt_float(static_cast<double>(s.mower_motor_power_watts), 1)));
+    status.values.push_back(
+        kv("mower_esc_current_semantics", "estimated from blade power/system voltage"));
+  }
   status.values.push_back(kv("mower_rpm", fmt_float(static_cast<double>(s.mower_motor_rpm), 0)));
 
   return status;

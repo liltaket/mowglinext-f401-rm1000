@@ -74,6 +74,9 @@ extern "C"
 #define BLADEMOTOR_REVERSE_COMMAND_VALUE 0xC1u
 #define BLADEMOTOR_POLL_INTERVAL_MS 20u
 #define BLADEMOTOR_SEQUENCED_POWER 1
+/* PAC5223 telemetry bytes 9-10 are electrical blade power in 0.1 W units.
+ * This is a board property, not a generic Yardforce 500B assumption. */
+#define BLADEMOTOR_TELEMETRY_POWER_DECIWATTS 1
 #else
 #define PANEL_TYPE PANEL_TYPE_YARDFORCE_500B_CLASSIC
 #define BLADEMOTOR_STOP_COMMAND_VALUE 0x00u

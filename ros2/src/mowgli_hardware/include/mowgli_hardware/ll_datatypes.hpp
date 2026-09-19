@@ -180,6 +180,10 @@ constexpr std::size_t LL_USS_SENSOR_COUNT = 5u;
 // ---------------------------------------------------------------------------
 
 constexpr uint8_t CONFIG_FLAG_FIRMWARE_DEBUG = (1u << 0u);
+/// Report-only firmware capability in LlConfigRsp::active_flags.  This bit is
+/// not a host-requestable config flag; it declares that LlBladeStatus::power_watts
+/// is electrical blade power in deciwatts rather than legacy current milliamps.
+constexpr uint8_t CONFIG_CAPABILITY_BLADE_POWER_DECIWATTS = (1u << 7u);
 
 // ---------------------------------------------------------------------------
 // Wire-format structs — all fields packed with no padding
@@ -473,7 +477,7 @@ struct LlBladeStatus
   uint8_t type;  ///< Must equal PACKET_ID_LL_BLADE_STATUS
   uint8_t is_active;  ///< 1=running, 0=stopped
   uint16_t rpm;  ///< Blade motor RPM
-  uint16_t power_watts;  ///< ESC current [mA]; legacy field name, not watts
+  uint16_t power_watts;  ///< Board-declared raw blade telemetry; see CONFIG_CAPABILITY_*
   float temperature;  ///< Blade/motor temperature [C]
   uint32_t error_count;  ///< Cumulative error counter
   uint16_t crc;  ///< CRC-16 CCITT over all preceding bytes
@@ -498,8 +502,8 @@ struct LlConfigReq
  * @brief Config response from the STM32 (PACKET_ID_LL_HIGH_LEVEL_CONFIG_RSP = 0x12).
  *
  * Reports the firmware's wire-protocol version (the compatibility key checked
- * against kMowgliProtocolVersion), the currently-active runtime config flags,
- * and its human-readable firmware semver.
+ * against kMowgliProtocolVersion), the active runtime config flags plus
+ * report-only CONFIG_CAPABILITY_* bits, and its human-readable firmware semver.
  */
 struct LlConfigRsp
 {

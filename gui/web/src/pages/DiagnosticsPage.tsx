@@ -1840,6 +1840,15 @@ export const DiagnosticsPage = () => {
                         <Col xs={12} lg={4}>
                             <Statistic title={t('diagnosticsPage.motorRpm')} value={status.mower_motor_rpm} precision={0}/>
                         </Col>
+                        <Col xs={12} lg={4}>
+                            <Statistic title={t('diagnosticsPage.bladeErrorCount')} value={status.mower_esc_error_count ?? 0} precision={0}/>
+                        </Col>
+                        {status.mower_motor_power_is_measured && <Col xs={12} lg={4}>
+                            <Statistic title={t('diagnosticsPage.bladePower')} value={status.mower_motor_power_watts} precision={1} suffix="W"/>
+                        </Col>}
+                        {status.mower_motor_power_is_measured && <Col xs={12} lg={4}>
+                            <Statistic title={t('diagnosticsPage.bladeCurrentEstimate')} value={status.mower_esc_current} precision={2} suffix="A"/>
+                        </Col>}
                     </Row>
                     <Flex wrap gap="small" style={{marginTop: 12}}>
                         <BoolStatusTag label={t('diagnosticsPage.rpiPower')} ok={!!status.raspberry_pi_power}/>
