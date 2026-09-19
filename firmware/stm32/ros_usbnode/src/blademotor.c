@@ -93,14 +93,13 @@ void blademotor_prepareMsg(uint8_t *msg)
 {    
     if (blademotor_u8OnOff)
     {
-        msg[5] = 0x80; /* change speed Motor */
-        msg[6] = 0x22; /* change CRC */
+        msg[5] = BLADEMOTOR_ON_COMMAND_VALUE; /* board-specific run value */
     }
     else
     {
         msg[5] = 0x00; /* change speed Motor */
-        msg[6] = 0xa2; /* change CRC */
     }
+    msg[6] = crcCalc(msg, BLADEMOTOR_LENGTH_RQST_MSG - 1u);
 }
 
 static void blademotor_recover_rx_if_needed(void)

@@ -52,6 +52,7 @@ extern "C"
 #define VALID_BOARD_DEFINED 1
 #define PANEL_TYPE {{.PanelType}}
 #define BLADEMOTOR_LENGTH_RECEIVED_MSG 16
+#define BLADEMOTOR_ON_COMMAND_VALUE 0x80u
 #define DEBUG_TYPE DEBUG_TYPE_UART
 
 #define MAX_MPS {{.MaxMps}}          // Allow maximum speed of 1.0 m/s
@@ -72,6 +73,11 @@ extern "C"
 #define VALID_BOARD_DEFINED 1
 #define PANEL_TYPE {{.PanelType}}
 #define BLADEMOTOR_LENGTH_RECEIVED_MSG 16
+#if defined(BOARD_BILTEMA_RM1000)
+#define BLADEMOTOR_ON_COMMAND_VALUE 0x82u
+#else
+#define BLADEMOTOR_ON_COMMAND_VALUE 0x80u
+#endif
 #define DEBUG_TYPE DEBUG_TYPE_SWO
 
 #define MAX_MPS {{.MaxMps}}          // Allow maximum speed of 1.0 m/s
@@ -86,6 +92,7 @@ extern "C"
 #elif defined(BOARD_LUV1000RI)
 #define PANEL_TYPE {{.PanelType}}
 #define BLADEMOTOR_LENGTH_RECEIVED_MSG 14
+#define BLADEMOTOR_ON_COMMAND_VALUE 0x80u
 
 #define VALID_BOARD_DEFINED 1
 #define DEBUG_TYPE 0
