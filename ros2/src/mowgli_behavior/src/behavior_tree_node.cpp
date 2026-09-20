@@ -1040,6 +1040,20 @@ private:
     const bool idle_nav2_suspend = declare_parameter<bool>("idle_nav2_suspend", false);
     blackboard_->set("idle_nav2_suspend", idle_nav2_suspend);
 
+    // This is deliberately a named, default-off lab escape hatch rather than
+    // weakening the bridge's firmware telemetry. It is consumed only by
+    // PreFlightCheck and can ignore only a protocol-version mismatch; every
+    // other preflight gate remains mandatory.
+    const bool lab_allow_incompatible_firmware =
+        declare_parameter<bool>("lab_allow_incompatible_firmware", false);
+    blackboard_->set("lab_allow_incompatible_firmware", lab_allow_incompatible_firmware);
+    if (lab_allow_incompatible_firmware)
+    {
+      RCLCPP_WARN(get_logger(),
+                  "LAB ONLY: lab_allow_incompatible_firmware=true. Preflight will ignore only "
+                  "the firmware compatibility result; no other safety gate is bypassed.");
+    }
+
     // Transit / mowing speeds, sourced from mowgli_robot.yaml and applied to
     // the live controllers by SetNavMode (FollowPath.primary_controller.max_linear_vel for the
     // RPP transit controller, FollowCoveragePath.speed_fast for FTC coverage).

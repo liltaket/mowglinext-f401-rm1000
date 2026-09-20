@@ -330,6 +330,12 @@ def generate_launch_description() -> LaunchDescription:
             # before motion by the root Nav2ResumeGuard + Nav2ReadyPoll.
             {"idle_nav2_suspend":
                 bool(robot_params.get("idle_nav2_suspend", False))},
+            # Default-off laboratory diagnostic escape hatch. This reaches only
+            # PreFlightCheck, where it can ignore only a firmware protocol
+            # mismatch; emergency, battery, GPS, TF and mowing-area checks stay
+            # enforced and hardware_bridge telemetry remains unchanged.
+            {"lab_allow_incompatible_firmware":
+                bool(robot_params.get("lab_allow_incompatible_firmware", False))},
             # transit_speed / mowing_speed flow into SetNavMode, which sets
             # them on the live controllers (FollowPath.primary_controller.max_linear_vel for
             # the RPP transit controller, FollowCoveragePath.speed_fast for the

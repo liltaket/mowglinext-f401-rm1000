@@ -613,6 +613,11 @@ private:
 ///                                               Higher = better, so require-RTK-Fixed
 ///                                               is min=4. Default 2 accepts DGPS+.
 ///   tf_timeout_sec    (double,  default 0.5)  — how long to wait for TF.
+///   lab_allow_incompatible_firmware (bool, default false) — LAB-ONLY opt-in
+///                                               that ignores only the firmware
+///                                               protocol compatibility result.
+///                                               Emergency, battery, GPS, TF and
+///                                               mowing-area checks remain mandatory.
 class PreFlightCheck : public BT::ConditionNode
 {
 public:
@@ -629,6 +634,10 @@ public:
                            2,
                            "Min GPS fix type (monotonic: 0=no,2=DGPS,3=RTKfloat,4=RTKfix)"),
         BT::InputPort<double>("tf_timeout_sec", 0.5, "Max wait for map→base_footprint TF"),
+        BT::InputPort<bool>("lab_allow_incompatible_firmware",
+                            false,
+                            "LAB ONLY: allow a firmware protocol mismatch; all other preflight "
+                            "gates remain active"),
     };
   }
 

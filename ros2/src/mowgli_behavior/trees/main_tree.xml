@@ -608,7 +608,7 @@
               <PublishHighLevelStatus state="2" state_name="PREFLIGHT_CHECK"/>
               <RetryUntilSuccessful num_attempts="120">
                 <Fallback>
-                  <PreFlightCheck min_battery="20.0" min_gps_fix_type="2" tf_timeout_sec="0.5"/>
+                  <PreFlightCheck min_battery="20.0" min_gps_fix_type="2" tf_timeout_sec="0.5" lab_allow_incompatible_firmware="{lab_allow_incompatible_firmware}"/>
                   <Sequence>
                     <WaitForDuration duration_sec="1.0"/>
                     <AlwaysFailure/>

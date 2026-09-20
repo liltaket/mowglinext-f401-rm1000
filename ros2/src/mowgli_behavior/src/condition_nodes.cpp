@@ -532,9 +532,11 @@ BT::NodeStatus PreFlightCheck::tick()
   float min_battery = 20.0f;
   int min_gps_fix_type = 2;
   double tf_timeout = 0.5;
+  bool lab_allow_incompatible_firmware = false;
   getInput<float>("min_battery", min_battery);
   getInput<int>("min_gps_fix_type", min_gps_fix_type);
   getInput<double>("tf_timeout_sec", tf_timeout);
+  getInput<bool>("lab_allow_incompatible_firmware", lab_allow_incompatible_firmware);
 
   std::vector<std::string> failures;
 
@@ -639,7 +641,7 @@ BT::NodeStatus PreFlightCheck::tick()
   // block undock/mow until the operator reflashes.
   {
     std::lock_guard<std::mutex> lock(ctx->context_mutex);
-    if (!ctx->latest_status.firmware_compatible)
+    if (!ctx->latest_status.firmware_compatible && !lab_allow_incompatible_firmware)
     {
       const std::string& ver = ctx->latest_status.firmware_version;
       char buf[96];
@@ -649,6 +651,18 @@ BT::NodeStatus PreFlightCheck::tick()
                ver.empty() ? "?" : ver.c_str(),
                static_cast<unsigned>(ctx->latest_status.firmware_protocol_version));
       failures.emplace_back(buf);
+    }
+    if (!ctx->latest_status.firmware_compatible && lab_allow_incompatible_firmware)
+    {
+      const std::string& ver = ctx->latest_status.firmware_version;
+      RCLCPP_WARN_THROTTLE(
+          ctx->node->get_logger(),
+          *ctx->node->get_clock(),
+          3000,
+          "LAB ONLY: allowing incompatible firmware in PreFlightCheck (fw=%s proto=%u). "
+          "Emergency, battery, GPS, TF and mowing-area gates remain enforced.",
+          ver.empty() ? "?" : ver.c_str(),
+          static_cast<unsigned>(ctx->latest_status.firmware_protocol_version));
     }
   }
 

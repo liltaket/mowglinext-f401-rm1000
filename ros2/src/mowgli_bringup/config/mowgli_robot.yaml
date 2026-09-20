@@ -238,6 +238,11 @@ mowgli:
     # back up) before any motion via the root Nav2ResumeGuard + Nav2ReadyPoll.
     # Opt-in per site.
     idle_nav2_suspend: false
+    # LAB ONLY: Default-off, temporary diagnostic escape hatch for an STM32
+    # firmware protocol mismatch. It bypasses only that PreFlightCheck result;
+    # emergency, battery, GPS, TF and mowing-area gates remain active. Do not
+    # enable for normal operation or upstream production configuration.
+    lab_allow_incompatible_firmware: false
     # IMU calibration (consumed by hardware_bridge_node — auto-triggered on dock)
     imu_cal_samples: 200
     imu_cal_persist_path: /ros2_ws/maps/imu_calibration.txt
