@@ -4,7 +4,8 @@
   <name>mowgli_gnss_bridge</name>
   <version>0.1.0</version>
   <description>
-    C++ port of the Universal GNSS topic bridge ("topic manager"). Subscribes to
+    C++ port of the Universal GNSS topic bridge ("topic manager") and a bounded
+    external RTCM-over-TCP source. Subscribes to
     the internal universal_gnss_ros2 status/RTCM topics plus /diagnostics and
     republishes them onto the public Mowgli GNSS contract (mowgli_interfaces/GnssStatus
     and rtcm_msgs/Message). Behaviour-exact replacement for the Python
