@@ -129,3 +129,25 @@ still required.
 - GPS-ground-progress stall detection is enabled at command >=0.10 m/s, less
   than 4 cm progress for 0.8 s, and GPS sigma <=0.40 m. Wheel odometry is not
   used as ground-truth because wheels can spin while blocked.
+
+## 2026-09-20 LoRa RTCM rover integration
+
+- The independent ESP32-S3/SX1262 sidecar was connected to the mower through
+  its stable USB by-id path. The host service exposed validated RTCM3 only on
+  `127.0.0.1:2233`; health remained available only on `127.0.0.1:9609`.
+- A temporary, isolated ROS adapter published the TCP stream to
+  `/_gps_internal/universal/rtcm`. NTRIP was disabled and ROS introspection
+  showed exactly one correction publisher, so correction sources did not
+  compete.
+- A bounded 12 s observation delivered 108 internal RTCM frames (15,581
+  bytes) covering all 14 observed source message types. The GNSS receiver
+  reported valid differential corrections, active corrections, RTK mode 3,
+  19 used satellites, and 100 percent quality.
+- Freshness was not yet equivalent to the prior Wi-Fi/NTRIP path. During a
+  later 20 s observation, correction age ranged from 1.3 s to 27.1 s (3.7 s
+  median), while 64 RTCM frames arrived. Treat the radio path as a working lab
+  correction source, not a proven production-reliability replacement.
+- No motion, blade, emergency-release, STM32 firmware, or `/cmd_vel` command
+  was issued. The production C++ TCP source in this branch was not deployed in
+  this live test; the temporary adapter remains a separate, reversible lab
+  component.
