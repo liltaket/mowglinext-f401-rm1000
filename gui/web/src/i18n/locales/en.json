@@ -811,7 +811,11 @@
     "firmwareFlashCta": "Flash firmware",
     "coverageToday": "Coverage today · {{pct}} %",
     "soilWetTitle": "Careful: the garden is wet (IrriSense)",
-    "soilWetBlocking": "scheduled mows are suspended"
+    "soilWetBlocking": "scheduled mows are suspended",
+    "digEscalationTitle": "Mowing halted — repeat dig detected",
+    "digEscalationBody": "The mower couldn't free itself and stopped {{distance}} m from the spot (needs {{required}} m to clear). Move it further away, then try again.",
+    "digEscalationReady": "Moved {{distance}} m from the spot — ready to clear.",
+    "digEscalationClear": "Clear & resume"
   },
   "onboardingPage": {
     "preview": "Preview",
@@ -2537,6 +2541,14 @@
     "temperatureThresholdsNote": "Blade-motor temperature is measured and reported only — no layer of the stack stops the blade on temperature. The warning and error thresholds used by the diagnostics (motor_temp_warn_c and motor_temp_error_c, in mowgli_monitoring/config/diagnostics.yaml) can be edited on the Parameters page."
   },
   "settingsObstacles": {
+    "digSensitivity": "Wheel-slip (dig) sensitivity",
+    "digSensitivityHelp": "How readily spinning wheels count as a dig (stop, short reverse; repeated digs at one spot stop the mission as DIG_OBSTRUCTION). Choose Low on tall or wet grass and on sandy or loose soil, where a healthy robot slips a lot. Off disables the detector on the computer; the firmware protection against blocked wheels stays active. Save and restart ROS2 to apply.",
+    "digSensitivityLevels": {
+      "off": "Off",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
     "digKeepouts": "Dig obstacles",
     "digAutoPromotion": "Propose an obstacle where the robot dug in",
     "digKeepoutsDescription": "When wheel slip is detected in a mowing area, add a proposal to the map page. Nothing is blocked until you accept it there: accepting turns it into a permanent keepout, rejecting drops it. Meanwhile the robot simply skips that spot for the rest of the mowing session. When disabled, no proposals are created; dig detection, stopping and recovery remain active. Save and restart ROS2 to apply.",
@@ -2693,8 +2705,8 @@
     "gnssProfilesDescription": "Normal settings are vendor-neutral. Expert settings are receiver-family specific and stay hidden until you explicitly enable them.",
     "signalProfileLabel": "Signal Profile",
     "signalProfileTooltip": "High-level constellation and signal preset. Saved with your settings, but only written to the receiver's flash when you run Plan & Apply in Expert mode.",
-    "baudLabel": "Baud",
-    "baudTooltip": "Target runtime/config baud for mowgli-gps and the receiver profile. Execution-baud probing for live apply is configured separately in expert mode.",
+    "baudLabel": "Target baud",
+    "baudTooltip": "Requested receiver baud after configuration. Universal GNSS detects and validates the current baud separately before applying it.",
     "savedToFlashTitle": "Saved to the GPS receiver flash",
     "savedToFlashIntro": "Baud and signal profile are firmware-side settings: on save they are written to the GPS receiver's flash and the receiver briefly reconnects.",
     "savedToFlashSafeBaud": "is the safe baud for USB serial links;",
@@ -2829,10 +2841,14 @@
     "fieldSerialDevice": "Serial device:",
     "fieldExecutionBaud": "Execution baud:",
     "fieldDetectedBaud": "Detected live baud:",
+    "fieldTargetBaud": "Requested target baud:",
+    "fieldActiveVerifiedBaud": "Verified active baud after apply:",
     "fieldRuntimeBaud": "Active runtime baud:",
     "fieldConfigBaud": "Target configured baud:",
     "executionBaudAuto": "auto / probing",
     "unknownValue": "unknown",
+    "manualCurrentBaudTitle": "Current baud (manual fallback)",
+    "manualCurrentBaudHelp": "Autodetection failed. Select the receiver's current baud; Universal GNSS will validate it with VERSIONA before any configuration write.",
     "fieldRestartError": "Restart error:",
     "backendWarnings": "Backend warnings",
     "commandIndex": "Command {{index}}",
@@ -3443,6 +3459,8 @@
   "settingsMqtt": {
     "bridge": "MQTT bridge",
     "bridgeDescription": "Publish status, battery and mow state to an MQTT broker (e.g. for a Home Assistant integration) and accept start/pause/dock commands back. Read-only monitoring, except for the command topic — the same channel the GUI's own buttons use.",
+    "homeAssistantDiscovery": "Home Assistant auto-discovery",
+    "homeAssistantDiscoveryDescription": "Automatically add this mower and its controls, battery, location and diagnostic sensors to Home Assistant. Uses the standard homeassistant discovery topic. Restart required.",
     "securityTitle": "No authentication on the wire by default",
     "securityDescription": "The bundled broker allows anonymous connections and the command topic accepts any high-level command — treat this like any other control surface on your local network, not something to expose to the internet.",
     "broker": "Broker",
@@ -3626,6 +3644,18 @@
     }
   },
   "hostUpdater": {
+    "changelog": {
+      "title": "What's in this update",
+      "features": "New features",
+      "fixes": "Fixes",
+      "breaking": "Breaking",
+      "other_one": "Plus {{count}} maintenance change.",
+      "other_other": "Plus {{count}} maintenance changes.",
+      "truncated": "Only the most recent changes are listed.",
+      "full": "Full list of changes",
+      "maintenanceOnly": "No new features or fixes — maintenance changes only.",
+      "unavailable": "The summary of changes could not be loaded (no internet access, or GitHub refused the request)."
+    },
     "standardStack": "Standard deployment",
     "customMix": "Custom mix",
     "imageMode": "Image selection",
@@ -3774,7 +3804,7 @@
     "latestInstalled": "Selected version is already installed",
     "notChecked": "Check for available software updates.",
     "checkNow": "Check for updates",
-    "simpleHelp": "Choose other versions or change the update source in Advanced.",
+    "simpleHelp": "Select Stable, Development, or another published branch above, then check and review the complete stack. Per-component versions and custom images remain in Advanced.",
     "unsavedSource": "Save source settings before reviewing an update.",
     "forkHelpTitle": "Using another repository or fork",
     "forkHelp": "Choose a repository enabled by your administrator, then Production, Development or Custom branch. Enter the full branch name, including slashes. A branch must publish a complete deployment before it can be installed. Forks are added to trusted_repositories in /etc/mowgli-updater.json on the host.",

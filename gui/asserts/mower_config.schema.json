@@ -278,6 +278,16 @@
           "title": "Datum Altitude",
           "description": "Map origin altitude (WGS84 ellipsoidal, metres) — site-specific; no default. Used as the altitude reference when converting GPS fixes to the local map frame."
         },
+        "gnss_stack": {
+          "type": "string",
+          "title": "GNSS Stack",
+          "enum": [
+            "universal",
+            "disabled"
+          ],
+          "default": "universal",
+          "description": "Universal runs the receiver in the GPS container and bridges its topics into the stack. Disabled launches no GNSS bridge. Applied on the next stack restart."
+        },
         "gnss_receiver_family": {
           "type": "string",
           "title": "Receiver Family",
@@ -289,6 +299,12 @@
           ],
           "default": "auto",
           "description": "Universal GNSS receiver family. Auto is recommended unless you know you need a specific parser."
+        },
+        "gnss_frame_id": {
+          "type": "string",
+          "title": "GNSS Frame",
+          "default": "gps_link",
+          "description": "TF frame stamped on the GNSS messages. Must match the antenna link in the robot model."
         },
         "gnss_receiver_model": {
           "type": "string",
@@ -349,6 +365,13 @@
           "title": "Configured Receiver Baud",
           "default": 921600,
           "description": "Persisted target baud for future receiver-side profile application."
+        },
+        "gnss_execution_baud": {
+          "type": "string",
+          "title": "Manual Current Baud Fallback",
+          "enum": ["auto", "115200", "230400", "460800", "921600"],
+          "default": "auto",
+          "description": "Auto by default. A manual current baud is used only after autodetection fails and is validated by Universal GNSS before apply."
         },
         "gnss_signal_group": {
           "type": "string",
@@ -726,6 +749,18 @@
           "title": "Propose an obstacle where the robot dug in",
           "description": "Record a wheel-slip dig as an obstacle proposal on the map page. A proposal blocks nothing until you accept it; the robot skips the spot for the rest of the session either way. Disabling this leaves dig detection and recovery active. Restart ROS2 to apply."
         },
+        "dig_sensitivity": {
+          "type": "string",
+          "title": "Wheel-slip (dig) sensitivity",
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium",
+          "description": "How readily spinning wheels count as a dig (hard stop, short reverse; repeated digs at one spot stop the mission as DIG_OBSTRUCTION). Choose Low on tall or wet grass and on sandy or loose soil, where a healthy robot slips a lot: only gross, sustained slip is then treated as a dig and it takes 5 repeats to stop the mission. High protects a short dry lawn from the slightest scuff. Off disables the detector on the computer; the firmware protection against blocked wheels stays active. Restart ROS2 to apply."
+        },
         "obstacle_margin": {
           "type": "number",
           "title": "Drawn Obstacle Margin",
@@ -976,6 +1011,12 @@
           "title": "Use TLS",
           "default": false,
           "description": "Connect over TLS, verified against the system CA store only (no custom CA/client-certificate option exists yet). If TLS setup fails the bridge refuses to connect rather than silently falling back to plaintext."
+        },
+        "mqtt_home_assistant_discovery_enabled": {
+          "type": "boolean",
+          "title": "Home Assistant Auto-discovery",
+          "default": false,
+          "description": "Publish a retained Home Assistant device discovery record for mower controls, state, battery, GPS, charging, emergency and diagnostics. Uses Home Assistant's default discovery prefix, homeassistant."
         }
       }
     },

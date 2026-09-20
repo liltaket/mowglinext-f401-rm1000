@@ -392,6 +392,7 @@ export type MapArea = {
   obstacle_info?: MapObstacleInfo[];
   proposed_obstacles?: Polygon[];
   proposed_obstacle_info?: MapObstacleInfo[];
+  id?: number;
 };
 
 export const enum MapObstacleInfoConstants {
@@ -448,6 +449,9 @@ export type Status = {
   ui_board_available?: boolean;
   mow_enabled?: boolean;
   firmware_debug_enabled?: boolean;
+  dig_escalated?: boolean;
+  dig_escalated_distance_m?: number;
+  dig_escalated_required_distance_m?: number;
   mower_esc_status?: number;
   mower_esc_temperature?: number;
   mower_esc_current?: number;

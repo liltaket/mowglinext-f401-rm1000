@@ -74,10 +74,12 @@
  *
  * MQTT → ROS2
  *   <prefix>/command    → /behavior_tree_node/high_level_control service call
- *                          (payload: ASCII decimal uint8, e.g. "1" — not a raw byte)
+ *                          (fresh, non-retained payload: ASCII decimal uint8, e.g. "1" — not a
+ *                          raw byte)
  *   <prefix>/start_area → /behavior_tree_node/start_in_area service call — start mowing the given
- *                          area now, ahead of the normal area-iteration order (payload: ASCII
- *                          decimal uint8 area index, same index space as <prefix>/areas above)
+ *                          area now, ahead of the normal area-iteration order (fresh, non-retained
+ *                          payload: ASCII decimal uint8 area index, same index space as
+ *                          <prefix>/areas above)
  *
  * See docs/MQTT_CONTROL.md for the full JSON schema of every topic above.
  *
@@ -109,12 +111,13 @@
  * mqtt_password      string  ""              node is run standalone (e.g. in tests).
  * mqtt_client_id     string  "mowgli_ros2"
  * mqtt_topic_prefix  string  "mowgli"
- * publish_rate       double  1.0   Hz — position/gps update rate limit
- * use_ssl            bool    false
- * datum_lat          double  0.0   — injected from mowgli_robot.yaml by full_system.launch.py,
- * datum_lon          double  0.0     same as map_server_node/navsat_to_absolute_pose_node; used
- *                                     only to label <prefix>/area_boundary's map-frame geometry
- *                                     with the WGS84 origin it's relative to.
+ * home_assistant_discovery_enabled bool false — publish
+ * retained Home Assistant device discovery
+ * publish_rate       double  1.0   Hz — position/gps
+ * update rate limit use_ssl            bool    false datum_lat          double  0.0   — injected
+ * from mowgli_robot.yaml by full_system.launch.py, datum_lon          double  0.0     same as
+ * map_server_node/navsat_to_absolute_pose_node; used only to label <prefix>/area_boundary's
+ * map-frame geometry with the WGS84 origin it's relative to.
  */
 
 #ifndef MOWGLI_MONITORING__MQTT_BRIDGE_NODE_HPP_
@@ -160,7 +163,11 @@ namespace mowgli_monitoring
 class IMqttClient
 {
 public:
-  using MessageCallback = std::function<void(const std::string& topic, const std::string& payload)>;
+  /// `retained` is true when the broker delivered its stored last value rather
+  /// than a newly published message. Consumers of control topics must treat
+  /// that as stale intent.
+  using MessageCallback =
+      std::function<void(const std::string& topic, const std::string& payload, bool retained)>;
 
   virtual ~IMqttClient() = default;
 
@@ -189,7 +196,8 @@ public:
   /**
    * @brief Subscribe to a topic pattern.
    * @param topic    MQTT topic filter (may include wildcards + and #).
-   * @param callback Invoked on each received message.
+   * @param callback Invoked on each received message, including whether the
+   *        broker marked that delivery as retained.
    * @return true if the subscription was accepted.
    */
   virtual bool subscribe(const std::string& topic, MessageCallback callback) noexcept = 0;
@@ -333,6 +341,13 @@ public:
   static std::string serialise_gps(const sensor_msgs::msg::NavSatFix& msg);
   static std::string serialise_rtk_status(const mowgli_interfaces::msg::GnssStatus& msg);
 
+  /// Home Assistant MQTT device-discovery helpers. The device id is derived
+  /// from the topic prefix, so separate mowers on one broker must use separate
+  /// mqtt_topic_prefix values.
+  static std::string home_assistant_device_id(const std::string& topic_prefix);
+  static std::string home_assistant_discovery_topic(const std::string& topic_prefix);
+  static std::string serialise_home_assistant_discovery(const std::string& topic_prefix);
+
   /**
    * @brief One mowing area's MQTT-relevant summary.
    *
@@ -347,6 +362,8 @@ public:
     std::string name{};
   };
 
+  static std::string serialise_home_assistant_discovery(const std::string& topic_prefix,
+                                                        const std::vector<AreaSummary>& areas);
   static std::string serialise_areas(const std::vector<AreaSummary>& areas);
 
   /**
@@ -372,14 +389,21 @@ public:
    * @brief Parse an MQTT command payload into a HighLevelControl command code.
    *
    * Expected payload: a single ASCII decimal integer, e.g. "1" for
-   * COMMAND_START — NOT a raw byte. Whitespace/garbage after the number
-   * (matched by sscanf's "%d") is tolerated, matching the pre-refactor
-   * behaviour; a fully non-numeric payload, one outside [0, 255], or an
-   * empty string is rejected.
+   * COMMAND_START — NOT a raw byte. The entire payload must be digits in
+   * [0, 255]; leading/trailing whitespace, signs, and trailing characters
+   * are deliberately rejected.
    * @return true and sets out_command on a valid uint8 payload; false
    *         (out_command left unchanged) otherwise.
    */
   static bool parse_command_payload(const std::string& payload, uint8_t& out_command);
+
+  /// Retained control messages are broker state, not fresh operator intent.
+  /// This restriction applies only to inbound control topics; retained
+  /// publishing for status and telemetry remains valid.
+  static bool is_fresh_control_message(bool retained)
+  {
+    return !retained;
+  }
 
   /**
    * @brief True if the <prefix>/high_level_status subscription looks stuck
@@ -445,8 +469,12 @@ private:
 
   // ---- MQTT command callback ------------------------------------------------
 
-  void on_mqtt_command(const std::string& topic, const std::string& payload);
-  void on_mqtt_start_area(const std::string& topic, const std::string& payload);
+  void on_mqtt_command(const std::string& topic, const std::string& payload, bool retained);
+  void on_mqtt_start_area(const std::string& topic, const std::string& payload, bool retained);
+  void on_home_assistant_status(const std::string& topic,
+                                const std::string& payload,
+                                bool retained);
+  bool publish_home_assistant_discovery();
 
   // ---- Area list: periodic poll of GetMowingArea + publish ------------------
 
@@ -498,8 +526,15 @@ private:
   std::string topic_prefix_{"mowgli"};
   double publish_rate_{1.0};
   bool use_ssl_{false};
+  bool home_assistant_discovery_enabled_{false};
   double datum_lat_{0.0};
   double datum_lon_{0.0};
+
+  // Tracks MQTT connection edges so discovery is refreshed after reconnect.
+  bool mqtt_was_connected_{false};
+  // Set by MQTT callbacks and consumed by on_timer() after spin_once() has
+  // fully returned. This avoids publishing from within the MQTT receive path.
+  bool home_assistant_discovery_publish_pending_{false};
 
   // ---- Rate-limiting state --------------------------------------------------
 
@@ -529,6 +564,7 @@ private:
   rclcpp::Time last_areas_poll_{0, 0, RCL_ROS_TIME};
   bool areas_poll_in_flight_{false};
   std::string last_areas_json_{};
+  std::vector<AreaSummary> last_areas_{};
 
   // ---- Area boundary polling state -------------------------------------------
 

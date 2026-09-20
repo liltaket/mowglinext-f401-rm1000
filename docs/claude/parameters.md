@@ -41,6 +41,7 @@ All 171 template keys. `L###` = line in `ros2/src/mowgli_bringup/config/mowgli_r
 | Key | Default | Consumer · where read | GUI | Life |
 |---|---|---|---|---|
 | `dig_obstacle_enabled` | true | `full_system.launch.py` → `map_server_node` subscription gate | Obstacles | launch |
+| `dig_sensitivity` | `medium` | `mowgli.launch.py` → `hardware_bridge` via `robot_config_util.dig_detector_params` (expands `off\|low\|medium\|high` into `dig_detect_enabled`, `dig_window_s`, `dig_min_wheel_dist`, `dig_progress_fraction`, `dig_escalate_count`; `medium` == `hardware_bridge.yaml`) | Obstacles | launch |
 
 Disabling dig proposals prevents new session-only map PROPOSALS (GUI map page: accept /
 reject). A proposal is inert — no keepout, no coverage hole, nothing saved — until the
@@ -66,7 +67,7 @@ It is the radius around a session dig point inside which FollowStrip skips cover
 |---|---|---|---|---|
 | `mower_model` (L18) | `YardForce500` | no ROS consumer; `ros2/scripts/compute_nav2_params.py:293` picks the motor-spec row; installer hardware presets | Hardware | sidecar |
 | `chassis_length` (L24) | 0.60 | xacro `mowgli.launch.py:94`; Nav2 footprint `navigation.launch.py:304` | Hardware | launch |
-| `chassis_width` (L25) | 0.40 | xacro `mowgli.launch.py:95`; footprint `navigation.launch.py:305`; `map_server.chassis_width` `full_system.launch.py:389`; `coverage_server.robot_width` `navigation.launch.py:930` | Hardware | launch |
+| `chassis_width` (L25) | 0.45 | xacro `mowgli.launch.py:95`; footprint `navigation.launch.py:305`; `map_server.chassis_width` `full_system.launch.py:389`; `coverage_server.robot_width` `navigation.launch.py:930` | Hardware | launch |
 | `chassis_height` (L26) | 0.19 | xacro `mowgli.launch.py:96` | Hardware | launch |
 | `chassis_mass_kg` (L27) | 8.76 | xacro `mowgli.launch.py:97` (base_link inertial; pinned by `test_urdf_xacro.py`) | Hardware | launch |
 | `wheel_radius` | 0.1 | xacro `mowgli.launch.py:99` → `base_z_offset` (base_link height above ground, so every sensor z) + wheel visuals. Nothing else; odometry uses `ticks_per_meter`. Was 0.04475 (xacro default 0.093) until 2026-09-05 | Hardware | launch |
@@ -189,7 +190,9 @@ All feed the xacro in `mowgli.launch.py:108–120`; `lidar_z`/`lidar_yaw`/`imu_y
 
 | Key (L) | Default | GUI | Life |
 |---|---|---|---|
+| `gnss_stack` | `universal` | GPS / Positioning | `full_system.launch.py` (launches the GNSS topic bridge; config only, no `GNSS_STACK` env fallback) |
 | `gnss_receiver_family` (L269) | `auto` | GPS / Positioning | sidecar |
+| `gnss_frame_id` | `gps_link` | GPS / Positioning | `full_system.launch.py` → bridge `frame_id`; sidecar |
 | `gnss_serial_device` (L270) | `/dev/ttyAMA4` | GPS / Positioning | sidecar |
 | `gnss_serial_baud` (L271) | 921600 | GPS / Positioning | sidecar |
 | `ntrip_enabled` (L278) | `false` | GPS / Positioning | sidecar |
@@ -286,7 +289,7 @@ All feed the xacro in `mowgli.launch.py:108–120`; `lidar_z`/`lidar_yaw`/`imu_y
 | Key (L) | Default | Becomes · clamp | GUI | Life |
 |---|---|---|---|---|
 | `max_obstacle_avoidance_distance` (L569) | 1.0 | `FTC.max_lateral_deviation` = clamp(0.5, 10.0) L811; `map_server.bypass_max_length` `full_system.launch.py:400` | Obstacles | launch |
-| `obstacle_inflation_radius` (L598) | 0.58 | **local** costmap `inflation_layer.inflation_radius` = clamp(0.58, 1.50) L859 (global stays 0.20) | Obstacles | launch |
+| `obstacle_inflation_radius` (L598) | 0.58 | **local** costmap `inflation_layer.inflation_radius` = min(1.50, max(floor, setting)) L960 (global stays 0.20); by default `floor` is the live chassis circumscribed radius (≈0.597 m for the shipped 0.45 × 0.60 chassis), or `local_inflation_inscribed_radius` when that override is enabled | Obstacles | launch |
 | `obstacle_detection_range_m` (L611) | 2.0 | `FTC.obstacle_lookahead` = max(4, clamp(0.2, 5.0)/0.05 poses) L823 | Obstacles | launch |
 | `obstacle_clearance_margin` (L627) | 0.2 | `FTC.obstacle_clearance_margin` = clamp(0.0, 0.50) L831 | Obstacles | launch |
 | `obstacle_wait_timeout_s` (L632) | 2.5 | `FTC.obstacle_wait_timeout_s` = clamp(0.5, 60.0) L838 | Obstacles | launch |
@@ -375,6 +378,17 @@ The installer also removes retired localization keys such as `use_scan_matching`
 | `use_sim_time` | `false` | Gazebo/Webots clock |
 | `serial_port` | `/dev/mowgli` | hardware_bridge serial device (overrides `hardware_bridge.yaml`) |
 | `enable_mqtt` | `false` | launch the MQTT bridge |
+
+### MQTT / Home Assistant (`mowgli_robot.yaml`, GUI Settings → MQTT)
+
+| Key | Default | Consumer | Life |
+|---|---|---|---|
+| `mqtt_enabled` | `false` | gates `mqtt_bridge_node` in `full_system.launch.py` | launch |
+| `mqtt_host` / `mqtt_port` | `localhost` / `1883` | `mqtt_bridge_node` broker connection | launch |
+| `mqtt_username` / `mqtt_password` | `""` / `""` | broker authentication | launch |
+| `mqtt_topic_prefix` | `mowgli` | data, availability and command topic namespace; also identifies the Home Assistant device | launch |
+| `mqtt_use_ssl` | `false` | broker TLS using the system CA store | launch |
+| `mqtt_home_assistant_discovery_enabled` | `false` | retained `homeassistant/device/<derived-id>/config` device discovery | launch |
 | `enable_foxglove` | `true` | launch `foxglove_bridge` |
 | `foxglove_port` | `8765` | Foxglove WebSocket port |
 | `use_lidar` (L135) | `mowgli_robot.yaml:lidar_enabled`, else `false` + warning | gates LiDAR nodes, the Nav2 overlay choice, and the fusion_graph LiDAR map anchor. **`LIDAR_ENABLED` in `.env` is NOT consulted** (removed 2026-08-31) |
