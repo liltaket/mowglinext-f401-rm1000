@@ -25,6 +25,7 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(rtcm_msgs REQUIRED)
 find_package(mowgli_interfaces REQUIRED)
 find_package(universal_gnss_ros2 REQUIRED)
+find_package(Threads REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Library: mowgli_gnss_bridge_lib
@@ -33,6 +34,28 @@ find_package(universal_gnss_ros2 REQUIRED)
 
 add_library(mowgli_gnss_bridge_lib STATIC
   src/universal_gnss_topic_bridge.cpp
+)
+
+add_library(rtcm3_framer_lib STATIC
+  src/rtcm3_framer.cpp
+)
+
+add_library(rtcm_tcp_client_lib STATIC
+  src/rtcm_tcp_client.cpp
+)
+
+target_include_directories(rtcm_tcp_client_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(rtcm_tcp_client_lib
+  rtcm3_framer_lib
+)
+
+target_include_directories(rtcm3_framer_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
 )
 
 target_include_directories(mowgli_gnss_bridge_lib PUBLIC
@@ -66,12 +89,30 @@ ament_target_dependencies(universal_gnss_topic_bridge
   rclcpp
 )
 
+# A generic external correction source. It deliberately publishes the same
+# internal topic as ntrip_node, but start_gps.sh launches exactly one source.
+add_executable(rtcm_tcp_source
+  src/rtcm_tcp_source.cpp
+)
+
+target_link_libraries(rtcm_tcp_source
+  rtcm3_framer_lib
+  rtcm_tcp_client_lib
+  Threads::Threads
+)
+
+ament_target_dependencies(rtcm_tcp_source
+  rclcpp
+  universal_gnss_ros2
+)
+
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
 install(TARGETS
     universal_gnss_topic_bridge
+    rtcm_tcp_source
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -100,6 +141,21 @@ if(BUILD_TESTING)
     universal_gnss_ros2
     diagnostic_msgs
     rtcm_msgs
+  )
+
+  ament_add_gtest(test_rtcm3_framer
+    test/test_rtcm3_framer.cpp
+  )
+  target_link_libraries(test_rtcm3_framer
+    rtcm3_framer_lib
+  )
+
+  ament_add_gtest(test_rtcm_tcp_client
+    test/test_rtcm_tcp_client.cpp
+  )
+  target_link_libraries(test_rtcm_tcp_client
+    rtcm_tcp_client_lib
+    Threads::Threads
   )
 endif()
 

@@ -201,6 +201,22 @@ the affected containers to apply manual edits.
 | `ntrip_password` | `centipede` | Password |
 | `ntrip_mountpoint` | `NEAR` | Mountpoint — `NEAR` auto-routes to the closest base via NMEA GGA (use `NEAR4` on legacy receivers, or pick a specific base from https://centipede.fr) |
 
+**Correction source selection**
+
+`gnss_correction_source` selects the sole external publisher for
+`/_gps_internal/universal/rtcm`: `ntrip` (the default), `tcp`, or `none`.
+For `tcp`, set `gnss_rtcm_tcp_host` and `gnss_rtcm_tcp_port`; the GPS sidecar
+will reconnect on failure, validate RTCM3 frame boundaries and CRC24Q, and
+discard partial bytes when a connection changes. Invalid source values or TCP
+endpoints make the sidecar fail closed rather than starting competing sources.
+The TCP source is receive-only and is suitable for a local correction relay;
+it does not enable radio, mower motion, or blade control.
+
+`connect_timeout_ms` defaults to 3000 and is a single deadline across every
+address returned for the configured host. DNS resolution itself uses the
+platform resolver and is not cancellable by the node; deploy a numeric local
+IP address (or a short-lived local resolver) when bounded shutdown is required.
+
 **Dock and undocking**
 
 | Parameter | Example | Description |

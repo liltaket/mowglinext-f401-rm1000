@@ -245,6 +245,11 @@ mowgli:
     gps_timeout_sec: 5.0              # pause mowing if no GPS for this long
 
     # NTRIP (RTK correction stream)
+    # Select exactly one correction publisher: ntrip, tcp, or none.
+    # tcp expects gnss_rtcm_tcp_host/port and validates RTCM3 CRC24Q frames.
+    gnss_correction_source: "ntrip"
+    gnss_rtcm_tcp_host: ""
+    gnss_rtcm_tcp_port: 0
     ntrip_enabled: false
     ntrip_host: ""
     ntrip_port: 2101

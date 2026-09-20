@@ -139,6 +139,56 @@ resolve_ntrip_enabled() {
   printf 'true\n'
 }
 
+# Correction transport is deliberately a single choice. NTRIP remains the
+# default so existing installations keep their established behaviour; TCP is
+# for a local external correction relay such as the LoRa sidecar bridge.
+resolve_correction_source() {
+  local source
+  source="$(parse_yaml_any gnss_correction_source correction_source)"
+  if [ -z "$source" ]; then
+    source="${GNSS_CORRECTION_SOURCE:-ntrip}"
+  fi
+  source="$(normalize_lower "$source")"
+  case "$source" in
+    ntrip|tcp|none)
+      printf '%s\n' "$source"
+      ;;
+    *)
+      echo "[start_gps.sh] ERROR: GNSS correction source must be ntrip, tcp, or none; got: ${source}" >&2
+      return 1
+      ;;
+  esac
+}
+
+resolve_rtcm_tcp_host() {
+  local host
+  host="$(parse_yaml_any gnss_rtcm_tcp_host rtcm_tcp_host)"
+  if [ -n "$host" ]; then
+    printf '%s\n' "$host"
+    return 0
+  fi
+  printf '%s\n' "${GNSS_RTCM_TCP_HOST:-}"
+}
+
+resolve_rtcm_tcp_port() {
+  local port
+  port="$(parse_yaml_any gnss_rtcm_tcp_port rtcm_tcp_port)"
+  if [ -n "$port" ]; then
+    printf '%s\n' "$port"
+    return 0
+  fi
+  printf '%s\n' "${GNSS_RTCM_TCP_PORT:-}"
+}
+
+require_tcp_endpoint() {
+  local host="$1"
+  local port="$2"
+  if [ -z "$host" ] || ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    echo "[start_gps.sh] ERROR: correction_source=tcp requires gnss_rtcm_tcp_host and gnss_rtcm_tcp_port (1..65535)." >&2
+    return 1
+  fi
+}
+
 resolve_ntrip_host() {
   local host
   host="$(parse_yaml_any gnss_ntrip_host ntrip_host)"
@@ -322,12 +372,12 @@ if [ ! -f "$GNSS_SIDECAR_SETUP_BASH" ]; then
 fi
 
 GPS_PID=""
-NTRIP_PID=""
+CORRECTION_SOURCE_PID=""
 UNIVERSAL_BRIDGE_PID=""
 
 cleanup() {
   [ -n "$GPS_PID" ] && kill "$GPS_PID" 2>/dev/null || true
-  [ -n "$NTRIP_PID" ] && kill "$NTRIP_PID" 2>/dev/null || true
+  [ -n "$CORRECTION_SOURCE_PID" ] && kill "$CORRECTION_SOURCE_PID" 2>/dev/null || true
   [ -n "$UNIVERSAL_BRIDGE_PID" ] && kill "$UNIVERSAL_BRIDGE_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -360,6 +410,7 @@ normalize_ros_double() {
 publish_rate_hz="$(normalize_ros_double "$(resolve_publish_rate_hz)")"
 frame_id="$(resolve_frame_id)"
 ntrip_enabled="$(resolve_ntrip_enabled)"
+correction_source="$(resolve_correction_source)"
 ntrip_host="$(resolve_ntrip_host)"
 ntrip_port="$(resolve_ntrip_port)"
 ntrip_user="$(resolve_ntrip_username)"
@@ -367,6 +418,17 @@ ntrip_password="$(resolve_ntrip_password)"
 ntrip_mountpoint="$(resolve_ntrip_mountpoint)"
 ntrip_gga_enabled="$(resolve_ntrip_gga_enabled)"
 ntrip_gga_interval_s="$(resolve_ntrip_gga_interval_s)"
+rtcm_tcp_host="$(resolve_rtcm_tcp_host)"
+rtcm_tcp_port="$(resolve_rtcm_tcp_port)"
+
+# Preserve the previous ntrip_enabled:false behaviour for installations that
+# have not opted into the selector yet. An explicit TCP source is unaffected.
+if [ "$correction_source" = "ntrip" ] && [ "$ntrip_enabled" != "true" ]; then
+  correction_source="none"
+fi
+if [ "$correction_source" = "tcp" ]; then
+  require_tcp_endpoint "$rtcm_tcp_host" "$rtcm_tcp_port"
+fi
 
 if [ "$transport" = "serial" ] && [ ! -e "$serial_device" ]; then
   echo "[start_gps.sh] ERROR: selected GNSS serial device does not exist: ${serial_device}"
@@ -426,13 +488,22 @@ ntrip_cmd=(
   -r "rtcm:=${internal_rtcm_topic}"
 )
 
+rtcm_tcp_cmd=(
+  "$ROS2_BIN" run mowgli_gnss_bridge rtcm_tcp_source --ros-args
+  -p "host:=${rtcm_tcp_host}"
+  -p "port:=${rtcm_tcp_port}"
+  -p "output_rtcm_topic:=${internal_rtcm_topic}"
+)
+
 echo "[start_gps.sh] Runtime=universal receiver_family=${receiver_family} transport=${transport} device=${serial_device} baud=${serial_baud} rate_hz=${publish_rate_hz}"
 
 if [ "$GNSS_DRY_RUN" = "true" ]; then
   print_command "receiver_node" "${receiver_node_cmd[@]}"
   print_command "topic_bridge" "${bridge_cmd[@]}"
-  if [ "$ntrip_enabled" = "true" ]; then
+  if [ "$correction_source" = "ntrip" ]; then
     print_command "ntrip_node" "${ntrip_cmd[@]}"
+  elif [ "$correction_source" = "tcp" ]; then
+    print_command "rtcm_tcp_source" "${rtcm_tcp_cmd[@]}"
   fi
   exit 0
 fi
@@ -443,11 +514,17 @@ GPS_PID=$!
 "${bridge_cmd[@]}" &
 UNIVERSAL_BRIDGE_PID=$!
 
-if [ "$ntrip_enabled" = "true" ]; then
+if [ "$correction_source" = "ntrip" ]; then
   echo "[start_gps.sh] Runtime=universal NTRIP enabled: ${ntrip_host}:${ntrip_port}/${ntrip_mountpoint}"
   sleep 3
   "${ntrip_cmd[@]}" &
-  NTRIP_PID=$!
+  CORRECTION_SOURCE_PID=$!
+elif [ "$correction_source" = "tcp" ]; then
+  echo "[start_gps.sh] Runtime=universal RTCM TCP enabled: ${rtcm_tcp_host}:${rtcm_tcp_port}"
+  "${rtcm_tcp_cmd[@]}" &
+  CORRECTION_SOURCE_PID=$!
+else
+  echo "[start_gps.sh] Runtime=universal corrections disabled"
 fi
 
 wait -n || true
