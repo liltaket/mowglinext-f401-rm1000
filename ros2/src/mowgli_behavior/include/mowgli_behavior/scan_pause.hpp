@@ -24,7 +24,7 @@
 // the blip: FollowPath goal cancelled, full F2C replan, transit back to the
 // resume cursor, 1.5 s blade spin-up — and the sequence restarted before the
 // next dropout. The robot cycled CALIBRATING → UNDOCKING → PLANNING → TRANSIT
-// for a whole session and mowed nothing (up to 200 re-dispatches, ~28 min).
+// for a whole session and mowed nothing (the former 200-pass exemption cap).
 //
 // ── What a short dropout actually needs ─────────────────────────────────────
 // Motion is already handled below the tree: collision_monitor's

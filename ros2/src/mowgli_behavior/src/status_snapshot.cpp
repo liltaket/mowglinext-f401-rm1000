@@ -28,10 +28,17 @@ mowgli_interfaces::msg::HighLevelStatus withLiveStatusFields(
   mowgli_interfaces::msg::HighLevelStatus msg;
 
   // Tree-owned identity: only PublishHighLevelStatus knows which branch is
-  // selected, so carry it through untouched.
+  // selected, so carry it through untouched before applying the one live
+  // SCAN_PAUSED overlay below.
   msg.state = base.state;
   msg.state_name = base.state_name;
   msg.sub_state_name = base.sub_state_name;
+  if (ctx.coverage_scan_paused &&
+      base.state == mowgli_interfaces::msg::HighLevelStatus::HIGH_LEVEL_STATE_AUTONOMOUS &&
+      base.state_name == "MOWING")
+  {
+    msg.sub_state_name = "SCAN_PAUSED";
+  }
 
   msg.current_area = static_cast<int16_t>(ctx.current_area);
   // The GUI computes progress as current_path_index / current_path
