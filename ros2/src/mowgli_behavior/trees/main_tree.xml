@@ -491,7 +491,14 @@
                BOUND: 5760 attempts x 5.0 s = 8 h (unchanged from the former
                960 x 30 s). -->
           <PublishHighLevelStatus state="1" state_name="CRITICAL_BATTERY_CHARGING"/>
-          <Fallback name="CriticalChargeOrAbort">
+          <!-- STOP is accepted only after docking completed and the charge hold
+               is active. It fails this sequence immediately, so MainLogic
+               reaches StopHoldSequence without the undock/resume tail. Keep it
+               here rather than before DockRobot: critical docking remains a
+               safety action, not a casually cancellable transit. -->
+          <ReactiveSequence name="CriticalChargeHold">
+            <Inverter name="CriticalChargeHoldNotStopped"><IsCommand command="8"/></Inverter>
+            <Fallback name="CriticalChargeOrAbort">
             <RetryUntilSuccessful num_attempts="5760">
               <Sequence>
                 <IsChargingProgressing/>
@@ -515,7 +522,8 @@
               <ClearCommand/>
               <AlwaysFailure/>
             </Sequence>
-          </Fallback>
+            </Fallback>
+          </ReactiveSequence>
           <!-- Recovered to the resume level — AUTO-CONTINUE. Undock (BackUp,
                not opennav UndockRobot: isDocked() is fragile with RTK drift at
                the dock) and fall through WITHOUT EndSession/ClearCommand, so
@@ -759,7 +767,13 @@
 
                        BOUND: 5760 attempts x 5.0 s = 8 h (unchanged from the
                        former 960 x 30 s). -->
-                  <Fallback name="ChargeOrAbort">
+                  <!-- Once docked and in the charge hold, STOP must leave the
+                       wait promptly and reach StopHoldSequence. Keep this
+                       after DockRobot so low-battery docking remains
+                       non-cancellable. -->
+                  <ReactiveSequence name="ChargeHold">
+                    <Inverter name="ChargeHoldNotStopped"><IsCommand command="8"/></Inverter>
+                    <Fallback name="ChargeOrAbort">
                     <RetryUntilSuccessful num_attempts="5760">
                       <Sequence>
                         <IsChargingProgressing/>
@@ -778,7 +792,8 @@
                       <ClearCommand/>
                       <AlwaysFailure/>
                     </Sequence>
-                  </Fallback>
+                    </Fallback>
+                  </ReactiveSequence>
                   <IsResumeUndockAllowed max_attempts="3"/>
                   <PublishHighLevelStatus state="2" state_name="RESUMING_UNDOCKING"/>
                   <WaitForDuration duration_sec="1.0"/>
@@ -852,7 +867,7 @@
                 <Sequence name="ManualChargeHandler">
                   <SetMowerEnabled enabled="false"/>
                   <StopMoving/>
-                  <PublishHighLevelStatus state="1" state_name="CHARGING"/>
+                  <PublishHighLevelStatus state="1" state_name="MANUAL_CHARGING"/>
                   <!-- Wait for the operator to take the mower off the dock. No
                        battery-threshold auto-undock here on purpose: the
                        operator docked it, so the operator undocks it.

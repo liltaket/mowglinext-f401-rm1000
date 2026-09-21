@@ -296,6 +296,7 @@
     "stateAtBase": "At base",
     "stateIdle": "Idle",
     "stateCharging": "Charging",
+    "stateManualCharging": "Manually docked",
     "statePreflight": "Pre-flight",
     "stateLeavingBase": "Leaving base",
     "stateCalibration": "Calibration",
@@ -761,6 +762,7 @@
     "headlineMinutes": "{{value}} min",
     "headlineUntilHomeSuffix": " until home.",
     "headlineChargingPrefix": "Charging · ",
+    "headlineMowingPausedPrefix": "Mowing paused · ",
     "headlinePercent": "{{value}} %",
     "emergencyStop": "Emergency stop",
     "headlineIdlePrefix": "Mowgli is ",
@@ -772,6 +774,8 @@
     "sublineMoving": "Moving at {{gps}} · {{area}}",
     "activeZone": "active zone",
     "sublineCharging": "On the dock, {{current}} A coming in.",
+    "sublineChargeHold": "Mowing is paused and resumes automatically at {{full}}%. Resume now is available from {{manual}}%.",
+    "sublineManualChargeHold": "Mowing is paused because the mower was docked manually. Take it off the dock before resuming.",
     "sublineEmergency": "Secure the area, then restart with the green button.",
     "sublineIdle": "Tap Play to start a mow, or let the schedule take over.",
     "emergencyConfirmBody": "This triggers the hardware emergency stop (blades + movement). Re-arm manually afterwards. Continue?",
@@ -1321,7 +1325,13 @@
     "startMowing": "Start mowing",
     "pause": "Pause",
     "returnToBase": "Return to base",
-    "rearm": "Re-arm"
+    "rearm": "Re-arm",
+    "resumeNow": "Resume now",
+    "cancelMowing": "Cancel mowing",
+    "lowChargeHold": "Mowing is paused while the battery charges.",
+    "manualChargeHold": "Mowing is paused because the mower was docked manually.",
+    "criticalChargeHold": "Mowing is paused for critical-battery charging.",
+    "chargeHold": "{{message}} It resumes automatically at {{full}}%. Resume is available at {{resumeAt}}%."
   },
   "modeSegment": {
     "ecoLabel": "Eco",
@@ -1383,6 +1393,10 @@
       "label": "Charging",
       "friendly": "Charging the battery"
     },
+    "MANUAL_CHARGING": {
+      "label": "Manually docked",
+      "friendly": "Mowing paused on the dock"
+    },
     "PREFLIGHT_CHECK": {
       "label": "Pre-flight",
       "friendly": "Checks before starting"
@@ -1434,6 +1448,10 @@
     "CRITICAL_BATTERY_DOCKING": {
       "label": "Critical battery",
       "friendly": "Critical battery — returning to base"
+    },
+    "CRITICAL_BATTERY_CHARGING": {
+      "label": "Critical-battery charge",
+      "friendly": "Mowing paused while the battery recovers"
     },
     "CRITICAL_BATTERY_NAV_FAILED": {
       "label": "Return failed",

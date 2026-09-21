@@ -296,6 +296,7 @@
     "stateAtBase": "À la base",
     "stateIdle": "Au repos",
     "stateCharging": "En charge",
+    "stateManualCharging": "Posée manuellement",
     "statePreflight": "Pré-vol",
     "stateLeavingBase": "Départ base",
     "stateCalibration": "Calibration",
@@ -761,6 +762,7 @@
     "headlineMinutes": "{{value}} min",
     "headlineUntilHomeSuffix": " avant la maison.",
     "headlineChargingPrefix": "En charge · ",
+    "headlineMowingPausedPrefix": "Tonte en pause · ",
     "headlinePercent": "{{value}} %",
     "emergencyStop": "Arrêt d'urgence",
     "headlineIdlePrefix": "Mowgli est ",
@@ -772,6 +774,8 @@
     "sublineMoving": "Avance à {{gps}} · {{area}}",
     "activeZone": "zone active",
     "sublineCharging": "Sur la dock, {{current}} A en entrée.",
+    "sublineChargeHold": "La tonte est en pause et reprendra automatiquement à {{full}}%. Reprise manuelle possible à partir de {{manual}}%.",
+    "sublineManualChargeHold": "La tonte est en pause car la tondeuse a été posée manuellement sur la base. Retirez-la de la base avant de reprendre.",
     "sublineEmergency": "Sécurise la zone puis relance avec le bouton vert.",
     "sublineIdle": "Tape Play pour démarrer une tonte ou laisse le planning gérer.",
     "emergencyConfirmBody": "Cela déclenche l'arrêt d'urgence matériel (lames + déplacement). À réarmer manuellement ensuite. Continuer ?",
@@ -1317,7 +1321,13 @@
     "startMowing": "Démarrer la tonte",
     "pause": "Pause",
     "returnToBase": "Retour à la base",
-    "rearm": "Réarmer"
+    "rearm": "Réarmer",
+    "resumeNow": "Reprendre maintenant",
+    "cancelMowing": "Annuler la tonte",
+    "lowChargeHold": "La tonte est en pause pendant la charge.",
+    "manualChargeHold": "La tonte est en pause car la tondeuse a été posée manuellement sur la base.",
+    "criticalChargeHold": "La tonte est en pause pour charger une batterie critique.",
+    "chargeHold": "{{message}} Reprise automatique à {{full}}%. Reprise possible à partir de {{resumeAt}}%."
   },
   "modeSegment": {
     "ecoLabel": "Eco",
@@ -1379,6 +1389,10 @@
       "label": "En charge",
       "friendly": "Recharge de la batterie"
     },
+    "MANUAL_CHARGING": {
+      "label": "Posée manuellement",
+      "friendly": "Tonte en pause sur la base"
+    },
     "PREFLIGHT_CHECK": {
       "label": "Pré-vol",
       "friendly": "Vérifications avant départ"
@@ -1430,6 +1444,10 @@
     "CRITICAL_BATTERY_DOCKING": {
       "label": "Batterie critique",
       "friendly": "Batterie critique — retour à la base"
+    },
+    "CRITICAL_BATTERY_CHARGING": {
+      "label": "Charge batterie critique",
+      "friendly": "Tonte en pause pendant la récupération de la batterie"
     },
     "CRITICAL_BATTERY_NAV_FAILED": {
       "label": "Échec retour",
