@@ -25,8 +25,8 @@ namespace mowgli_behavior
 {
 
 /// Return a copy of @p base with every context-derived field refreshed from
-/// @p ctx, keeping the tree-owned state identity (state / state_name /
-/// sub_state_name) exactly as cached.
+/// @p ctx, keeping the tree-owned state identity exactly as cached except for
+/// the live SCAN_PAUSED sub-state overlay during autonomous MOWING.
 ///
 /// HighLevelStatus mixes two kinds of field. The state identity is only
 /// meaningful at a tree transition, so PublishHighLevelStatus (a SyncActionNode)
