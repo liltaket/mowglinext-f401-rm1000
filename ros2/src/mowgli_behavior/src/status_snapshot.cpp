@@ -28,7 +28,7 @@ mowgli_interfaces::msg::HighLevelStatus withLiveStatusFields(
   mowgli_interfaces::msg::HighLevelStatus msg;
 
   // Tree-owned identity: only PublishHighLevelStatus knows which branch is
-  // selected, so carry it through untouched.
+  // selected, so carry it through untouched before applying live overlays.
   msg.state = base.state;
   msg.state_name = base.state_name;
   msg.sub_state_name = base.sub_state_name;
@@ -42,6 +42,18 @@ mowgli_interfaces::msg::HighLevelStatus withLiveStatusFields(
   if (ctx.transiting)
   {
     msg.sub_state_name = "TRANSIT";
+  }
+
+  // A scan pause owns the blade. It therefore takes priority over a transit
+  // snapshot: on the completion tick transit_active_ is cleared only after
+  // onRunning() has sampled it, while sendFollowGoal() can synchronously find
+  // a stale scan. Never let that one-tick stale TRANSIT snapshot hide the
+  // active safety hold from the operator.
+  if (ctx.coverage_scan_paused &&
+      base.state == mowgli_interfaces::msg::HighLevelStatus::HIGH_LEVEL_STATE_AUTONOMOUS &&
+      base.state_name == "MOWING")
+  {
+    msg.sub_state_name = "SCAN_PAUSED";
   }
 
   msg.current_area = static_cast<int16_t>(ctx.current_area);
