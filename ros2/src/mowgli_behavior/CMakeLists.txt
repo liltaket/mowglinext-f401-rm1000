@@ -480,6 +480,7 @@ if(BUILD_TESTING)
     test/test_coverage_resume_location.cpp
     src/coverage_nodes.cpp
     src/coverage_persistence.cpp
+    src/status_snapshot.cpp
   )
 
   target_include_directories(test_coverage_resume_location PUBLIC
@@ -513,6 +514,7 @@ if(BUILD_TESTING)
     test/test_swath_progress.cpp
     src/coverage_nodes.cpp
     src/coverage_persistence.cpp
+    src/status_snapshot.cpp
   )
 
   target_include_directories(test_swath_progress PUBLIC
@@ -555,8 +557,8 @@ if(BUILD_TESTING)
 
   # ---- test_follow_strip_dig ----
   # Tick-level: FollowStrip against fake /follow_path + /navigate_to_pose
-  # servers. A dig while mowing cancels the goal, waits for the reverse, and
-  # resumes the same unit past the hole; later units are cut at recorded zones.
+  # servers. Covers dig recovery and short scan dropouts: the latter cut and
+  # restore the blade without canceling/replacing the active coverage goal.
   ament_add_ros_isolated_gtest(test_follow_strip_dig
     test/test_follow_strip_dig.cpp
     src/coverage_nodes.cpp

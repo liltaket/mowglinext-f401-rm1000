@@ -50,7 +50,7 @@
 | `trees/navigate_to_pose.xml` | 79 | Nav2 `bt_navigator` tree: ControllerSelector/GoalCheckerSelector/PlannerSelector + replan only if path invalid, RoundRobin recovery |
 | **`include/mowgli_behavior/`** | | |
 | `action_nodes.hpp` | 33 | Umbrella header; declares `registerAllNodes()` |
-| `bt_context.hpp` | ~680 | `BTContext` shared via blackboard key `"context"`; `clearSingleAreaMode()`; dispatch budgets `kMaxAreaAttempts=5`, `kMaxStartBlockedAttempts=3`, `kMaxGuardHaltedPasses=200` |
+| `bt_context.hpp` | ~680 | `BTContext` shared via blackboard key `"context"`; `clearSingleAreaMode()`; dispatch budgets `kMaxAreaAttempts=5`, `kMaxStartBlockedAttempts=3`, `kMaxGuardHaltedPasses=30`; live `coverage_scan_paused` status overlay |
 | `condition_nodes.hpp` | 830 | 25 `BT::ConditionNode` classes + ports |
 | `coverage_nodes.hpp` | 600 | `FollowStrip`, `TransitToStrip`, `DetourAroundObstacle`, `GetNextUnmowedArea`, `PlanCoverageArea`; pure helpers `resolveResumeLocation`, `refreshSwathProgress`, `coveragePercentFromCursor`, `forwardSkipIndex`; `kMowAngleAutoDeg=-1` |
 | `navigation_nodes.hpp` | 389 | `StopMoving`, `ClearCostmap`, `SetNav2Lifecycle`, `NavigateToPose`, `BackUp`, `SetNavMode`, `NavigateInsideBoundary` (phase enum) |
@@ -81,7 +81,7 @@
 | `calibration_nodes.cpp` | 433 | Undock line-fit yaw → `/fusion_graph_node/set_pose`; forward-drive yaw seed |
 | `recording_nodes.cpp` | 515 | Area recording, DP simplification, save via `/map_server_node/add_area` |
 | `status_nodes.cpp` | 240 | Status publish, `EndSession` (session-scoped clears :159-215), `ClearCommand` |
-| `status_snapshot.cpp` | ~70 | Tree-owned vs live field split for `HighLevelStatus`; the one exception is `sub_state_name`, live-overridden to `"TRANSIT"` from `BTContext::transiting` (set by `FollowStrip`, `coverage_nodes.cpp`) — consumed by `mowgli_leds`' `kTransit` ring pattern |
+| `status_snapshot.cpp` | ~80 | Tree-owned vs live field split for `HighLevelStatus`; `sub_state_name` is live-overridden to `"TRANSIT"` from `BTContext::transiting` (set by `FollowStrip`, `coverage_nodes.cpp`) or, with higher safety priority, `"SCAN_PAUSED"` while stale LiDAR owns the blade-off hold — `TRANSIT` drives `mowgli_leds`' `kTransit` ring pattern |
 | `utility_nodes.cpp` | 267 | Blade service, waits, `SaveObstacles`, `ResetEmergency` |
 | `coverage_persistence.cpp` | 219 | Text file `coverage_resume.txt` (atomic tmp+rename): `current_command`, `single_area_target`, `current_area`, `completed_areas`, per-`area` rows (pose_count, fingerprint, resume, completed swaths) |
 | `battery_filter.cpp` | 85 | Rate-independent low-pass on `v_battery` |
@@ -104,7 +104,7 @@
 | `test_localization_health.cpp` | 419 | 16 tests: pivot σ inflation must NOT pause; plain-GPS fallback must; stale feed |
 | `test_battery_critical_resume.cpp` | 225 | 3 tests: critical-battery tail auto-continues, only dead charger ends session |
 | `test_guard_fallthrough.cpp` | ~360 | 6 tests: guard handlers return FAILURE + structural `<AlwaysFailure/>` check on every blocking guard in `main_tree.xml` + `<MarkGuardHalt/>` is the first handler child in `SensorSafetyGuard` / `LocalizationGuard` |
-| `test_high_level_status_snapshot.cpp` | 185 | 8 tests: republished status carries live battery/progress, tree-owned state untouched, `transiting` overrides `sub_state_name` to `"TRANSIT"` |
+| `test_high_level_status_snapshot.cpp` | ~200 | status projection tests: republished status carries live battery/progress, tree-owned state untouched, `SCAN_PAUSED` takes priority over a transit snapshot |
 | `test_battery_filter.cpp` | 243 | 13 tests: sag immunity, rate independence, invalid reading never → 0 % |
 | `test_dock_alignment.cpp` | 191 | 11 tests: along/cross decomposition, yaw-drift band |
 
@@ -243,7 +243,7 @@ Publishes none. `ctx->tf_buffer` (`behavior_tree_node.cpp` :82) is used to look 
 - `SaveObstacles` targets `/obstacle_tracker/save_obstacles`, which nothing in the repo serves — it always logs "service unavailable, skipping" and returns SUCCESS (`utility_nodes.cpp` :219-224).
 - Undock is `BackUp` via `/backup`, not `UndockRobot` (Invariant 10); `undock_distance` must exceed `CalibrateHeadingFromUndock` `min_displacement_m` (`main_tree.xml` :534 passes 0.5; the C++ port default is 0.20) or the yaw refinement is skipped — and if the charger is STILL on at that point the node returns FAILURE and the whole undock sequence retries (`calibration_nodes.cpp` :124-152).
 - `PreFlightCheck` requires only `min_gps_fix_type=2` on the dock; RTK-Fixed is enforced after undock by `WaitForGpsFix(min_fix_type=4)` (`main_tree.xml` :489-528). Do not raise the dock gate (chicken-and-egg under the canopy).
-- `GetNextUnmowedArea` skips `is_navigation_area` areas (`coverage_nodes.cpp` :1693-1698) and retires an area after `kMaxAreaAttempts=5` no-progress dispatches (+`kMaxStartBlockedAttempts=3` exempted START_OCCUPIED passes, +`kMaxGuardHaltedPasses=200` exempted guard-interrupted passes flagged by `MarkGuardHalt`) — `bt_context.hpp` :141-235. A guard that halts the Root mid-pass WITHOUT `MarkGuardHalt` charges every pause to that budget: field 2026-09-07/08, a flaky LiDAR link tripped `IsScanStale` 3× in 25 s and the area retired with 0 swaths.
+- `GetNextUnmowedArea` skips `is_navigation_area` areas (`coverage_nodes.cpp`) and retires an area after `kMaxAreaAttempts=5` no-progress dispatches (+`kMaxStartBlockedAttempts=3` exempted START_OCCUPIED passes, +`kMaxGuardHaltedPasses=30` exempted guard-interrupted/fleet-yield passes flagged by `MarkGuardHalt`). A retired incomplete area is tracked separately and routes to coverage failure, never `MOWING_COMPLETE`. A one-second scan blip pauses the blade inside `FollowStrip`; Root `IsScanStale` waits >20 s, so the shared cap allows at least ten minutes of blind intervals before normal retirement resumes.
 - `BoundaryGuard`/`LocalizationGuard` whitelist commands 7/3/5/6/2 and the blade-off dock transit (`IsCommand 1` + `IsDocking`); dropping 5/6 from the whitelist silently loses every finished recording (`main_tree.xml` :146-154).
 - `GUI` state maps: `WAITING_FOR_RTK` is emitted but present in none of `constants.ts` / `utils.tsx` / `BTStateGraph.tsx`; `SKIP_STRIP` is listed there but never emitted.
 
