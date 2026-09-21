@@ -37,8 +37,10 @@
  * single tick — entry needs battery < 10 %, resume needs battery >= 95 %).
  */
 
+#include <fstream>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 
 #include <rclcpp/rclcpp.hpp>
@@ -53,6 +55,7 @@ using mowgli_behavior::BTContext;
 using mowgli_behavior::ClearCommand;
 using mowgli_behavior::EndSession;
 using mowgli_behavior::IsBatteryAbove;
+using mowgli_behavior::IsCommand;
 using mowgli_behavior::IsResumeUndockAllowed;
 
 // ---------------------------------------------------------------------------
@@ -77,6 +80,36 @@ public:
 
 ::testing::Environment* const rclcpp_env =
     ::testing::AddGlobalTestEnvironment(new RclcppEnvironment());
+
+// BehaviorTree.CPP rejects RUNNING from a SyncActionNode. This stateful
+// surrogate stays RUNNING until the ReactiveSequence halts it on STOP.
+class WaitForCharge : public BT::StatefulActionNode
+{
+public:
+  WaitForCharge(const std::string& name, const BT::NodeConfig& config)
+      : BT::StatefulActionNode(name, config)
+  {
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return {};
+  }
+
+  BT::NodeStatus onStart() override
+  {
+    return BT::NodeStatus::RUNNING;
+  }
+
+  BT::NodeStatus onRunning() override
+  {
+    return BT::NodeStatus::RUNNING;
+  }
+
+  void onHalted() override
+  {
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Fixture — mirrors the tail of CriticalBatteryDock (charge-hold + branch).
@@ -108,6 +141,7 @@ protected:
     blackboard->set("battery_full_pct", 95.0f);
 
     factory.registerNodeType<IsBatteryAbove>("IsBatteryAbove");
+    factory.registerNodeType<IsCommand>("IsCommand");
     factory.registerNodeType<IsResumeUndockAllowed>("IsResumeUndockAllowed");
     factory.registerNodeType<EndSession>("EndSession");
     factory.registerNodeType<ClearCommand>("ClearCommand");
@@ -124,25 +158,27 @@ protected:
                                    ++undock_count;
                                    return BT::NodeStatus::SUCCESS;
                                  });
+    factory.registerNodeType<WaitForCharge>("WaitForCharge");
   }
 
   BT::Tree makeTree()
   {
-    // The inner 30 s WaitForDuration is collapsed to a bare AlwaysFailure here:
-    // in the recovery case IsBatteryAbove short-circuits it, and in the
-    // charger-failed case ChargingProgress fails first, so the wait is never
-    // reached. The RetryUntilSuccessful cap mirrors the real tree.
+    // The inner 5 s wait is a controllable RUNNING stand-in: recovery
+    // short-circuits it, a dead charger fails before it, and STOP must halt it
+    // immediately through the surrounding ReactiveSequence.
     static const char* xml = R"(
       <root BTCPP_format="4">
         <BehaviorTree ID="MainTree">
           <Sequence name="CriticalBatteryDockTail">
-            <Fallback name="CriticalChargeOrAbort">
+            <ReactiveSequence name="CriticalChargeHold">
+              <Inverter name="CriticalChargeHoldNotStopped"><IsCommand command="8"/></Inverter>
+              <Fallback name="CriticalChargeOrAbort">
               <RetryUntilSuccessful num_attempts="960">
                 <Sequence>
                   <ChargingProgress/>
                   <Fallback>
                     <IsBatteryAbove threshold="{battery_full_pct}"/>
-                    <AlwaysFailure/>
+                    <WaitForCharge/>
                   </Fallback>
                 </Sequence>
               </RetryUntilSuccessful>
@@ -151,7 +187,8 @@ protected:
                 <ClearCommand/>
                 <AlwaysFailure/>
               </Sequence>
-            </Fallback>
+              </Fallback>
+            </ReactiveSequence>
             <IsResumeUndockAllowed max_attempts="3"/>
             <UndockMarker/>
           </Sequence>
@@ -181,6 +218,68 @@ TEST_F(CriticalBatteryResumeTest, RecoveryAutoContinuesWithoutEndingSession)
   EXPECT_EQ(ctx->area_resume_pose_index[0], 42u);
   // The undock/resume tail actually executed.
   EXPECT_EQ(undock_count, 1);
+}
+
+// An operator cancel during the *completed* critical charge hold must leave
+// the loop immediately. It is a normal STOP hold, not a dead-charger session
+// end: preserve the cursor and never run the undock/resume tail.
+TEST_F(CriticalBatteryResumeTest, StopDuringChargeHoldPreservesSessionAndSkipsUndock)
+{
+  ctx->current_command = 1;  // COMMAND_START; already waiting on the dock
+  ctx->area_resume_pose_index[0] = 42;
+  ctx->battery_percent = 50.0f;
+  charging_ok = true;
+
+  auto tree = makeTree();
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::RUNNING);
+  ctx->current_command = 8;  // COMMAND_STOP arrives while WaitForCharge runs
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::FAILURE);
+  EXPECT_EQ(ctx->current_command, 8);
+  ASSERT_EQ(ctx->area_resume_pose_index.count(0), 1u);
+  EXPECT_EQ(ctx->area_resume_pose_index[0], 42u);
+  EXPECT_EQ(undock_count, 0);
+}
+
+TEST(CriticalBatteryResumeStructureTest, StopGatesArePostDockReactiveHoldsBeforeBothWaits)
+{
+  std::ifstream input(MOWGLI_MAIN_TREE_PATH);
+  ASSERT_TRUE(input.good());
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  const std::string tree = contents.str();
+  const auto critical = tree.find("<Sequence name=\"CriticalBatteryDock\">");
+  const auto dock = tree.find("<DockRobot", critical);
+  const auto reactive_hold = tree.find("<ReactiveSequence name=\"CriticalChargeHold\">", critical);
+  const auto stop_gate = tree.find("CriticalChargeHoldNotStopped", critical);
+  const auto wait = tree.find("<Fallback name=\"CriticalChargeOrAbort\">", critical);
+  const auto undock = tree.find("<IsResumeUndockAllowed", critical);
+  ASSERT_NE(critical, std::string::npos);
+  ASSERT_NE(dock, std::string::npos);
+  ASSERT_NE(reactive_hold, std::string::npos);
+  ASSERT_NE(stop_gate, std::string::npos);
+  ASSERT_NE(wait, std::string::npos);
+  ASSERT_NE(undock, std::string::npos);
+  EXPECT_LT(dock, stop_gate);
+  EXPECT_LT(reactive_hold, stop_gate);
+  EXPECT_LT(stop_gate, wait);
+  EXPECT_LT(wait, undock);
+
+  const auto low_dock = tree.find("<Sequence name=\"BatteryDockAndResume\">");
+  const auto low_dock_action = tree.find("<DockRobot", low_dock);
+  const auto low_reactive_hold = tree.find("<ReactiveSequence name=\"ChargeHold\">", low_dock);
+  const auto low_stop_gate = tree.find("ChargeHoldNotStopped", low_dock);
+  const auto low_wait = tree.find("<Fallback name=\"ChargeOrAbort\">", low_dock);
+  const auto low_undock = tree.find("<IsResumeUndockAllowed", low_dock);
+  ASSERT_NE(low_dock, std::string::npos);
+  ASSERT_NE(low_dock_action, std::string::npos);
+  ASSERT_NE(low_reactive_hold, std::string::npos);
+  ASSERT_NE(low_stop_gate, std::string::npos);
+  ASSERT_NE(low_wait, std::string::npos);
+  ASSERT_NE(low_undock, std::string::npos);
+  EXPECT_LT(low_dock_action, low_reactive_hold);
+  EXPECT_LT(low_reactive_hold, low_stop_gate);
+  EXPECT_LT(low_stop_gate, low_wait);
+  EXPECT_LT(low_wait, low_undock);
 }
 
 // Dead charger: no charge progress MUST end the session (EndSession +
