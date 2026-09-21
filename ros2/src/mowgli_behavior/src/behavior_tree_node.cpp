@@ -29,6 +29,7 @@
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "mowgli_behavior/action_nodes.hpp"
 #include "mowgli_behavior/battery_filter.hpp"
+#include "mowgli_behavior/blade_control_service.hpp"
 #include "mowgli_behavior/bt_context.hpp"
 #include "mowgli_behavior/condition_nodes.hpp"
 #include "mowgli_behavior/coverage_nodes.hpp"
@@ -57,6 +58,7 @@
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/int32.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 using namespace std::chrono_literals;
@@ -163,6 +165,7 @@ public:
   }
 
 private:
+  friend struct BladeServiceTestPeer;
   // ------------------------------------------------------------------
   // ROS2 infrastructure
   // ------------------------------------------------------------------
@@ -578,6 +581,31 @@ private:
           updateLocalizationHealthLocked();
         });
 
+    // LocalizationGuard's position-payload freshness backstop (mowglinext#694):
+    // /gps/status staying live only proves the RECEIVER's own health/status
+    // feed is alive, not that the POSITION it reports is still updating —
+    // field-confirmed 2026-09-20, an RTK-Fixed receiver with a perfectly live
+    // /gps/status kept /gps/fix's lat/lon frozen for minutes. LocalizationMonitorNode
+    // (mowgli_localization) already computes the right answer for this from
+    // /gps/absolute_pose; reuse it here instead of re-deriving position
+    // freshness a second time. transient_local depth 1 to match the
+    // publisher (a "latched" mode topic), so a late-starting BT sees the
+    // current mode immediately rather than only the next transition.
+    localization_mode_sub_ =
+        create_subscription<std_msgs::msg::Int32>("/mowgli/localization/mode_id",
+                                                  rclcpp::QoS(1).transient_local(),
+                                                  [this](std_msgs::msg::Int32::ConstSharedPtr msg)
+                                                  {
+                                                    std::lock_guard<std::mutex> lock(
+                                                        context_->context_mutex);
+                                                    loc_obs_.position_mode_seen = true;
+                                                    // LocalizationMode::DEAD_RECKONING == 0
+                                                    // (mowgli_localization/localization_monitor_policy.hpp).
+                                                    loc_obs_.position_dead_reckoning =
+                                                        (msg->data == 0);
+                                                    updateLocalizationHealthLocked();
+                                                  });
+
     // collision_monitor state — used by IsObstacleStuck to detect when
     // the robot is wedged on an obstacle (PolygonStop active for ≥5 s).
     // Latched into BTContext so the condition tick is a pure read.
@@ -647,6 +675,7 @@ private:
 
   void setupServiceServer()
   {
+    blade_control_service_ = std::make_unique<BladeControlService>(*this, context_);
     coverage_orientation_service_ = std::make_unique<CoverageOrientationService>(*this, context_);
     using HighLevelControl = mowgli_interfaces::srv::HighLevelControl;
 
@@ -696,6 +725,11 @@ private:
                           "(battery %.1f %%)",
                           static_cast<double>(context_->battery_percent));
             }
+            // OFF must not survive an explicit new/resumed mow. Preserve the
+            // direction across pauses/recharge; do not call endSession here.
+            if (cmd == HighLevelControl::Request::COMMAND_START ||
+                cmd == HighLevelControl::Request::COMMAND_MANUAL_MOW)
+              context_->blade_direction.clearOperatorInhibit();
             context_->current_command = cmd;
             // A plain COMMAND_START means "mow the lawn", so it must cancel any
             // single-area clip still latched from an earlier ~/start_in_area run.
@@ -712,7 +746,9 @@ private:
             }
           }
           resp->success = true;
-        });
+        },
+        rclcpp::ServicesQoS(),
+        get_node_base_interface()->get_default_callback_group());
 
     RCLCPP_DEBUG(get_logger(), "~/high_level_control service server created");
 
@@ -737,10 +773,13 @@ private:
           {
             std::lock_guard<std::mutex> lock(context_->context_mutex);
             context_->target_area_index = static_cast<int>(req->area);
+            context_->blade_direction.clearOperatorInhibit();
             context_->current_command = 1;  // COMMAND_START
           }
           resp->success = true;
-        });
+        },
+        rclcpp::ServicesQoS(),
+        get_node_base_interface()->get_default_callback_group());
 
     RCLCPP_DEBUG(get_logger(), "~/start_in_area service server created");
 
@@ -1048,6 +1087,7 @@ private:
     // stomped the launch-injected values — the configured speeds never applied.
     context_->transit_speed = declare_parameter<double>("transit_speed", 0.2);
     context_->mowing_speed = declare_parameter<double>("mowing_speed", 0.2);
+    context_->blade_auto_reverse = declare_parameter<bool>("blade_auto_reverse", false);
 
     // Rain delay: parameter in minutes, blackboard in seconds.
     const double rain_delay_minutes = declare_parameter<double>("rain_delay_minutes", 30.0);
@@ -1189,11 +1229,13 @@ private:
                 "Behavior tree tick rate: %.1f Hz (%ld ms)",
                 tick_rate,
                 period.count());
-    tick_timer_ = create_wall_timer(period,
-                                    [this]()
-                                    {
-                                      tickTree();
-                                    });
+    tick_timer_ = create_wall_timer(
+        period,
+        [this]()
+        {
+          tickTree();
+        },
+        get_node_base_interface()->get_default_callback_group());
   }
 
   void tickTree()
@@ -1267,6 +1309,7 @@ private:
   // ------------------------------------------------------------------
 
   std::shared_ptr<BTContext> context_;
+  std::unique_ptr<BladeControlService> blade_control_service_;
   std::unique_ptr<CoverageOrientationService> coverage_orientation_service_;
 
   // GPS-fixed debounce state (see the /gps callback): rides through the F9P
@@ -1304,6 +1347,7 @@ private:
       gnss_observation_freshness_;
   rclcpp::Subscription<mowgli_interfaces::msg::AbsolutePose>::SharedPtr gps_sub_;
   rclcpp::Subscription<mowgli_interfaces::msg::GnssStatus>::SharedPtr gnss_status_sub_;
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr localization_mode_sub_;
   rclcpp::Subscription<nav2_msgs::msg::CollisionMonitorState>::SharedPtr collision_monitor_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_liveness_sub_;
 
