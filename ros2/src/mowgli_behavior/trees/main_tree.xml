@@ -459,6 +459,13 @@
              ============================================================ -->
         <Sequence name="CriticalBatteryDock">
           <IsBatteryLow threshold="{battery_critical_pct}" voltage_threshold="{battery_critical_voltage}"/>
+          <!-- Once STOP is observed after docking, keep the stopped mower out
+               of this higher-priority branch on later root ticks. The same
+               gate is below the DockRobot action, so STOP during the safety
+               transit cannot cancel docking. -->
+          <Inverter name="CriticalChargeStopNotLatched">
+            <IsCriticalChargeStopHeld latch_current_stop="false"/>
+          </Inverter>
           <SetMowerEnabled enabled="false"/>
           <StopMoving/>
           <PublishHighLevelStatus state="2" state_name="CRITICAL_BATTERY_DOCKING"/>
@@ -497,7 +504,9 @@
                here rather than before DockRobot: critical docking remains a
                safety action, not a casually cancellable transit. -->
           <ReactiveSequence name="CriticalChargeHold">
-            <Inverter name="CriticalChargeHoldNotStopped"><IsCommand command="8"/></Inverter>
+            <Inverter name="CriticalChargeHoldNotStopped">
+              <IsCriticalChargeStopHeld latch_current_stop="true"/>
+            </Inverter>
             <Fallback name="CriticalChargeOrAbort">
             <RetryUntilSuccessful num_attempts="5760">
               <Sequence>

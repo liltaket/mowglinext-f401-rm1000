@@ -37,6 +37,7 @@
  * single tick — entry needs battery < 10 %, resume needs battery >= 95 %).
  */
 
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -56,6 +57,7 @@ using mowgli_behavior::ClearCommand;
 using mowgli_behavior::EndSession;
 using mowgli_behavior::IsBatteryAbove;
 using mowgli_behavior::IsCommand;
+using mowgli_behavior::IsCriticalChargeStopHeld;
 using mowgli_behavior::IsResumeUndockAllowed;
 
 // ---------------------------------------------------------------------------
@@ -112,7 +114,9 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// Fixture — mirrors the tail of CriticalBatteryDock (charge-hold + branch).
+// Fixture — mirrors the critical branch entry, post-dock charge hold, and
+// stop-hold fallthrough. DockMarker/ChargingProgress/UndockMarker isolate the
+// branch traversal while the command gate and charge-stop node are real.
 //
 // A returned SUCCESS means the recovery/undock tail ran; FAILURE means the
 // charger-failed abort ran (undock tail skipped). ChargingProgress and
@@ -127,7 +131,9 @@ protected:
   BT::BehaviorTreeFactory factory;
 
   bool charging_ok = true;  // stand-in for IsChargingProgressing
+  int dock_count = 0;  // stand-in for DockRobot
   int undock_count = 0;  // stand-in for BackUp (undock/resume tail)
+  int stop_hold_count = 0;
 
   void SetUp() override
   {
@@ -142,6 +148,7 @@ protected:
 
     factory.registerNodeType<IsBatteryAbove>("IsBatteryAbove");
     factory.registerNodeType<IsCommand>("IsCommand");
+    factory.registerNodeType<IsCriticalChargeStopHeld>("IsCriticalChargeStopHeld");
     factory.registerNodeType<IsResumeUndockAllowed>("IsResumeUndockAllowed");
     factory.registerNodeType<EndSession>("EndSession");
     factory.registerNodeType<ClearCommand>("ClearCommand");
@@ -152,10 +159,31 @@ protected:
                                       return charging_ok ? BT::NodeStatus::SUCCESS
                                                          : BT::NodeStatus::FAILURE;
                                     });
+    factory.registerSimpleCondition("BatteryLow",
+                                    [](BT::TreeNode&)
+                                    {
+                                      return BT::NodeStatus::SUCCESS;
+                                    });
     factory.registerSimpleAction("UndockMarker",
                                  [this](BT::TreeNode&)
                                  {
                                    ++undock_count;
+                                   return BT::NodeStatus::SUCCESS;
+                                 });
+    factory.registerSimpleAction("DockMarker",
+                                 [this](BT::TreeNode&)
+                                 {
+                                   ++dock_count;
+                                   return BT::NodeStatus::SUCCESS;
+                                 });
+    factory.registerSimpleAction("StopHoldMarker",
+                                 [this](BT::TreeNode&)
+                                 {
+                                   if (ctx->current_command != 8)
+                                   {
+                                     return BT::NodeStatus::FAILURE;
+                                   }
+                                   ++stop_hold_count;
                                    return BT::NodeStatus::SUCCESS;
                                  });
     factory.registerNodeType<WaitForCharge>("WaitForCharge");
@@ -169,9 +197,15 @@ protected:
     static const char* xml = R"(
       <root BTCPP_format="4">
         <BehaviorTree ID="MainTree">
-          <Sequence name="CriticalBatteryDockTail">
+          <Fallback name="MainLogic">
+          <Sequence name="CriticalBatteryDock">
+            <BatteryLow/>
+            <Inverter><IsCriticalChargeStopHeld/></Inverter>
+            <DockMarker/>
             <ReactiveSequence name="CriticalChargeHold">
-              <Inverter name="CriticalChargeHoldNotStopped"><IsCommand command="8"/></Inverter>
+              <Inverter name="CriticalChargeHoldNotStopped">
+                <IsCriticalChargeStopHeld latch_current_stop="true"/>
+              </Inverter>
               <Fallback name="CriticalChargeOrAbort">
               <RetryUntilSuccessful num_attempts="960">
                 <Sequence>
@@ -192,6 +226,8 @@ protected:
             <IsResumeUndockAllowed max_attempts="3"/>
             <UndockMarker/>
           </Sequence>
+          <StopHoldMarker/>
+          </Fallback>
         </BehaviorTree>
       </root>
     )";
@@ -233,11 +269,63 @@ TEST_F(CriticalBatteryResumeTest, StopDuringChargeHoldPreservesSessionAndSkipsUn
   auto tree = makeTree();
   EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::RUNNING);
   ctx->current_command = 8;  // COMMAND_STOP arrives while WaitForCharge runs
-  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::FAILURE);
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::SUCCESS);
   EXPECT_EQ(ctx->current_command, 8);
   ASSERT_EQ(ctx->area_resume_pose_index.count(0), 1u);
   EXPECT_EQ(ctx->area_resume_pose_index[0], 42u);
   EXPECT_EQ(undock_count, 0);
+}
+
+// Once STOP has been observed after DockRobot completes, the critical branch
+// must remain out on later root ticks. Otherwise its high priority re-enters
+// IsBatteryLow and dispatches a second DockRobot goal before StopHoldSequence.
+TEST_F(CriticalBatteryResumeTest, StopAfterCriticalDockDoesNotReissueDockGoal)
+{
+  ctx->current_command = 1;
+  ctx->battery_percent = 5.0f;
+  charging_ok = true;
+
+  auto tree = makeTree();
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::RUNNING);
+  EXPECT_EQ(dock_count, 1);
+
+  ctx->current_command = 8;
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::SUCCESS);
+  EXPECT_TRUE(ctx->critical_charge_stop_latched);
+  EXPECT_EQ(undock_count, 0);
+  EXPECT_EQ(stop_hold_count, 1);
+
+  // Simulate process restart after persisting the canceled session. The stop
+  // command and latch must both survive so startup cannot reissue DockRobot.
+  const auto path = ::testing::TempDir() + "/critical_charge_stop_restart.txt";
+  ctx->coverage_resume_path = path;
+  ASSERT_TRUE(mowgli_behavior::saveCoverageResumeState(*ctx));
+  auto restarted = std::make_shared<BTContext>();
+  restarted->coverage_resume_path = path;
+  ASSERT_TRUE(mowgli_behavior::loadCoverageResumeState(*restarted));
+  ctx = restarted;
+  blackboard->set("context", ctx);
+
+  // A fresh root traversal represents the next timer tick. The restored gate
+  // must keep the tree in StopHold without issuing DockRobot again.
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::SUCCESS);
+  EXPECT_EQ(dock_count, 1);
+  EXPECT_EQ(stop_hold_count, 2);
+  std::filesystem::remove(path);
+}
+
+TEST_F(CriticalBatteryResumeTest, StopBeforeCriticalDockDoesNotCancelSafetyDocking)
+{
+  ctx->current_command = 8;
+  ctx->battery_percent = 5.0f;
+  charging_ok = true;
+
+  auto tree = makeTree();
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::SUCCESS);
+  EXPECT_EQ(dock_count, 1);
+  EXPECT_TRUE(ctx->critical_charge_stop_latched);
+  EXPECT_EQ(undock_count, 0);
+  EXPECT_EQ(stop_hold_count, 1);
 }
 
 TEST(CriticalBatteryResumeStructureTest, StopGatesArePostDockReactiveHoldsBeforeBothWaits)

@@ -76,6 +76,33 @@ TEST(CoveragePersistence, DisablingDuringResumeRetainsPerpendicularAndHistory)
   std::remove(ctx.coverage_resume_path.c_str());
 }
 
+TEST(CoveragePersistence, StoppedChargeHoldPersistsStopWithoutDroppingResumeCursor)
+{
+  BTContext cancelled;
+  cancelled.coverage_resume_path = ::testing::TempDir() + "/charge_hold_stop.txt";
+  cancelled.current_command = 8;  // COMMAND_STOP
+  cancelled.critical_charge_stop_latched = true;
+  cancelled.area_resume_pose_index[2] = 42;
+  cancelled.area_path_pose_count[2] = 100;
+  cancelled.area_plan_fingerprint[2] = 1234;
+
+  ASSERT_TRUE(saveCoverageResumeState(cancelled));
+
+  BTContext restarted;
+  restarted.coverage_resume_path = cancelled.coverage_resume_path;
+  ASSERT_TRUE(loadCoverageResumeState(restarted));
+  EXPECT_EQ(restarted.current_command, 8);
+  EXPECT_TRUE(restarted.critical_charge_stop_latched);
+  ASSERT_EQ(restarted.area_resume_pose_index.count(2), 1u);
+  EXPECT_EQ(restarted.area_resume_pose_index.at(2), 42u);
+
+  const bool auto_continue =
+      restarted.current_command == 1 &&
+      (!restarted.area_resume_pose_index.empty() || !restarted.completed_areas.empty());
+  EXPECT_FALSE(auto_continue);
+  std::remove(cancelled.coverage_resume_path.c_str());
+}
+
 TEST(CoveragePersistence, FailedPlanningCountsSessionsAndSurvivesRestart)
 {
   BTContext ctx;

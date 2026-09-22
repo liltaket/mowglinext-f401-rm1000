@@ -181,6 +181,13 @@ struct BTContext
   std::chrono::steady_clock::time_point manual_resume_requested_time{};
   static constexpr double kManualResumeMaxAgeSec = 30.0;
 
+  /// Latched after COMMAND_STOP is observed in CriticalBatteryDock's
+  /// post-dock charge hold. The critical-battery branch otherwise re-enters
+  /// on every root tick and would send another DockRobot goal before reaching
+  /// StopHoldSequence. Explicit new commands clear this latch. Protected by
+  /// context_mutex.
+  bool critical_charge_stop_latched{false};
+
   /// Set by the ~/start_in_area service to REQUEST mowing a single, specific
   /// area instead of iterating all areas. This is the one-shot *request*:
   /// GetNextUnmowedArea consumes it on the next onStart() and latches the

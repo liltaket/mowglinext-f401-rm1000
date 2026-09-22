@@ -268,6 +268,28 @@ public:
   BT::NodeStatus tick() override;
 };
 
+/// Returns SUCCESS for a latched critical charge-hold STOP. The optional port
+/// also latches a current COMMAND_STOP when used inside the post-dock hold.
+/// Used before critical docking and within its charge hold so the completed
+/// dock action is not reissued on later root ticks.
+class IsCriticalChargeStopHeld : public BT::ConditionNode
+{
+public:
+  IsCriticalChargeStopHeld(const std::string& name, const BT::NodeConfig& config)
+      : BT::ConditionNode(name, config)
+  {
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return {BT::InputPort<bool>("latch_current_stop",
+                                false,
+                                "Latch COMMAND_STOP here; false only reads the persisted latch")};
+  }
+
+  BT::NodeStatus tick() override;
+};
+
 // ---------------------------------------------------------------------------
 // IsCoverageComplete
 // ---------------------------------------------------------------------------

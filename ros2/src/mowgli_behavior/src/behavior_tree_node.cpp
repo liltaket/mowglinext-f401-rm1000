@@ -110,26 +110,31 @@ public:
       // Auto-continue after a mid-run container restart: the loader also restored
       // current_command from disk, but only leave it active (so MowingSequence
       // auto-re-enters) when it was a mow command (COMMAND_START == 1) AND a
-      // resumable snapshot genuinely exists. Any other restored command, or an
-      // empty snapshot, falls back to IDLE so the robot never starts moving on
-      // boot without real resume state. EndSession clears commands/cursors;
-      // a phase-only cross-hatch snapshot therefore stays IDLE too.
+      // resumable snapshot genuinely exists. Preserve an explicitly latched
+      // critical charge STOP as a stop hold across restart; other restored
+      // commands, or an empty snapshot, fall back to IDLE. EndSession clears
+      // commands/cursors; a phase-only cross-hatch snapshot therefore stays
+      // IDLE too.
       constexpr uint8_t kCommandStart = 1;  // HighLevelControl::Request::COMMAND_START
       const bool has_resumable_state =
           !context_->area_resume_pose_index.empty() || !context_->completed_areas.empty();
       const bool auto_continue = context_->current_command == kCommandStart && has_resumable_state;
-      if (!auto_continue)
+      constexpr uint8_t kCommandStop = 8;  // HighLevelControl::Request::COMMAND_STOP
+      const bool preserve_stop_hold =
+          context_->current_command == kCommandStop && context_->critical_charge_stop_latched;
+      if (!auto_continue && !preserve_stop_hold)
       {
         context_->current_command = 0;  // IDLE — require an explicit operator start
       }
       RCLCPP_INFO(get_logger(),
                   "Restored coverage resume state from %s (current_area=%d, %zu area(s) with a "
-                  "resume cursor, %zu completed, auto_continue=%s)",
+                  "resume cursor, %zu completed, auto_continue=%s, stop_hold=%s)",
                   context_->coverage_resume_path.c_str(),
                   context_->current_area,
                   context_->area_resume_pose_index.size(),
                   context_->completed_areas.size(),
-                  auto_continue ? "true" : "false");
+                  auto_continue ? "true" : "false",
+                  preserve_stop_hold ? "true" : "false");
     }
 
     setupSubscribers();
@@ -749,6 +754,17 @@ private:
                 cmd == HighLevelControl::Request::COMMAND_MANUAL_MOW)
               context_->blade_direction.clearOperatorInhibit();
             context_->current_command = cmd;
+            if (cmd != HighLevelControl::Request::COMMAND_STOP)
+            {
+              context_->critical_charge_stop_latched = false;
+            }
+            else if (context_->last_high_level_status.state_name == "CRITICAL_BATTERY_CHARGING")
+            {
+              // Capture cancellation synchronously as well as in the tree
+              // condition, so the persisted snapshot already represents this
+              // post-dock hold if the process stops before its next tick.
+              context_->critical_charge_stop_latched = true;
+            }
             // A plain COMMAND_START means "mow the lawn", so it must cancel any
             // single-area clip still latched from an earlier ~/start_in_area run.
             // EndSession normally clears it, but a session can legitimately stay
@@ -762,6 +778,19 @@ private:
             {
               clearSingleAreaMode(*context_);
             }
+          }
+          // The BT tick and this service use the same default mutually
+          // exclusive callback group, so no tree node can read or mutate the
+          // coverage maps during this snapshot. Persist STOP synchronously
+          // before acknowledging it: otherwise a restart can restore an older
+          // COMMAND_START and auto-resume the cancelled session.
+          if (cmd == HighLevelControl::Request::COMMAND_STOP &&
+              !context_->coverage_resume_path.empty() && !saveCoverageResumeState(*context_))
+          {
+            RCLCPP_ERROR(get_logger(),
+                         "HighLevelControl: STOP is active in memory but could not persist the "
+                         "cancelled command to '%s'; inspect storage before restarting",
+                         context_->coverage_resume_path.c_str());
           }
           resp->success = true;
         },
@@ -793,6 +822,7 @@ private:
             context_->target_area_index = static_cast<int>(req->area);
             context_->blade_direction.clearOperatorInhibit();
             context_->current_command = 1;  // COMMAND_START
+            context_->critical_charge_stop_latched = false;
           }
           resp->success = true;
         },

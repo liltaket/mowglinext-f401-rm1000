@@ -37,6 +37,7 @@ void registerAllNodes(BT::BehaviorTreeFactory& factory)
   factory.registerNodeType<IsBatteryAbove>("IsBatteryAbove");
   factory.registerNodeType<IsManualResumeRequested>("IsManualResumeRequested");
   factory.registerNodeType<IsCommand>("IsCommand");
+  factory.registerNodeType<IsCriticalChargeStopHeld>("IsCriticalChargeStopHeld");
 
   factory.registerNodeType<IsGPSFixed>("IsGPSFixed");
   factory.registerNodeType<IsCoverageComplete>("IsCoverageComplete");
