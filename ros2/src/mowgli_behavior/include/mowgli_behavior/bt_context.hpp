@@ -198,6 +198,10 @@ struct BTContext
   /// until an operator sends a new command, rather than retrying at BT rate.
   bool critical_dock_failure_latched{false};
 
+  /// Set by LatchCriticalDockFailure and consumed by the node after the current
+  /// tree tick, so persistence remains serialized with coverage-map access.
+  bool critical_dock_failure_persistence_requested{false};
+
   /// Set by the ~/start_in_area service to REQUEST mowing a single, specific
   /// area instead of iterating all areas. This is the one-shot *request*:
   /// GetNextUnmowedArea consumes it on the next onStart() and latches the

@@ -301,17 +301,9 @@ BT::NodeStatus IsCriticalDockFailureLatched::tick()
 BT::NodeStatus LatchCriticalDockFailure::tick()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  {
-    std::lock_guard<std::mutex> lock(ctx->context_mutex);
-    ctx->critical_dock_failure_latched = true;
-  }
-  if (!ctx->coverage_resume_path.empty() && !saveCoverageResumeState(*ctx) && ctx->node)
-  {
-    RCLCPP_ERROR(ctx->node->get_logger(),
-                 "Critical docking failure is latched in memory but could not be persisted to "
-                 "'%s'; inspect storage before restarting",
-                 ctx->coverage_resume_path.c_str());
-  }
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
+  ctx->critical_dock_failure_latched = true;
+  ctx->critical_dock_failure_persistence_requested = true;
   return BT::NodeStatus::SUCCESS;
 }
 

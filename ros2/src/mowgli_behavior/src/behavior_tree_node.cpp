@@ -1445,12 +1445,20 @@ private:
     {
       RCLCPP_ERROR(get_logger(), "Exception during tree tick: %s", ex.what());
     }
-    if (command_resume_persistence_requested_.exchange(false) &&
-        !saveCoverageResumeState(*context_))
+    bool persist_resume_state = command_resume_persistence_requested_.exchange(false);
+    {
+      std::lock_guard<std::mutex> lock(context_->context_mutex);
+      if (context_->critical_dock_failure_persistence_requested)
+      {
+        context_->critical_dock_failure_persistence_requested = false;
+        persist_resume_state = true;
+      }
+    }
+    if (persist_resume_state && !saveCoverageResumeState(*context_))
     {
       RCLCPP_ERROR(get_logger(),
-                   "HighLevelControl: command is active in memory but could not persist its "
-                   "resume state to '%s'; inspect storage before restarting",
+                   "The active command or critical docking failure could not be persisted to "
+                   "'%s'; inspect storage before restarting",
                    context_->coverage_resume_path.c_str());
     }
   }
