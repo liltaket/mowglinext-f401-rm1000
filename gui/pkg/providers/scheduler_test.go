@@ -38,6 +38,7 @@ func buildScheduler(ros *types.MockRosProvider, db *types.MockDBProvider) *Sched
 	return &SchedulerProvider{
 		rosProvider:            ros,
 		dbProvider:             db,
+		hasHighLevelStatus:     true,
 		lastHighLevelStateName: "IDLE",
 		coverageSessionKnown:   true,
 		coverageResumeKnown:    true,
@@ -148,6 +149,13 @@ func TestSafeToStart_IdleChargingWithoutActiveSession(t *testing.T) {
 	s.lastHighLevelState = 1 // IDLE
 	s.lastHighLevelStateName = "CHARGING"
 	assert.True(t, s.safeToStart())
+}
+
+func TestSafeToStart_UnknownHighLevelStatus(t *testing.T) {
+	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
+	s.hasHighLevelStatus = false
+	s.lastHighLevelState = 1 // The zero-value state must not be treated as IDLE.
+	assert.False(t, s.safeToStart())
 }
 
 func TestSafeToStart_EmergencyActive(t *testing.T) {
@@ -275,6 +283,74 @@ func TestSafeToStart_ResumableIdleSessionStaysBlocked(t *testing.T) {
 // --------------------------------------------------------------------------
 // checkSchedules — integration-style tests using mocks
 // --------------------------------------------------------------------------
+
+func TestCheckStartupStatusAt_DelayedIdleStartsCurrentScheduledMinute(t *testing.T) {
+	ros := types.NewMockRosProvider()
+	db := types.NewMockDBProvider()
+	startup := time.Date(2024, 1, 15, 9, 30, 10, 0, time.Local) // Monday
+	storeSchedule(t, db, schedule{
+		ID:         "startup-window",
+		Time:       "09:30",
+		DaysOfWeek: []int{int(startup.Weekday())},
+		Enabled:    true,
+	})
+
+	s := buildScheduler(ros, db)
+	s.hasHighLevelStatus = false
+	s.checkSchedulesAt(startup)
+	assert.Empty(t, ros.ServiceCalls, "an unavailable status must fail closed")
+
+	// The first retained status can be NULL while the behavior tree is
+	// transitioning. It must not consume the startup-minute retry.
+	s.hasHighLevelStatus = true
+	s.lastHighLevelState = 0 // NULL / transitional
+	s.checkStartupStatusAt(startup, startup.Add(5*time.Second))
+	assert.Empty(t, ros.ServiceCalls)
+
+	s.lastHighLevelState = 1 // IDLE
+	s.checkStartupStatusAt(startup, startup.Add(10*time.Second))
+	s.checkSchedulesAt(startup)
+
+	require.Len(t, ros.ServiceCalls, 1, "startup during a due minute must not wait for the next ticker minute")
+	assert.NotNil(t, readSchedule(t, db, "startup-window").LastRun)
+}
+
+func TestCheckStartupStatusAt_DoesNotFireStaleSchedule(t *testing.T) {
+	ros := types.NewMockRosProvider()
+	db := types.NewMockDBProvider()
+	startup := time.Date(2024, 1, 15, 9, 31, 10, 0, time.Local) // Monday
+	storeSchedule(t, db, schedule{
+		ID:         "startup-stale",
+		Time:       "09:30",
+		DaysOfWeek: []int{int(startup.Weekday())},
+		Enabled:    true,
+	})
+
+	s := buildScheduler(ros, db)
+	s.lastHighLevelState = 1 // IDLE
+	s.checkStartupStatusAt(startup.Add(-time.Minute), startup)
+
+	assert.Empty(t, ros.ServiceCalls, "startup must not backfill an already elapsed minute")
+}
+
+func TestCheckStartupStatusAt_RepeatedStatusDoesNotDuplicateAcceptedRun(t *testing.T) {
+	ros := types.NewMockRosProvider()
+	db := types.NewMockDBProvider()
+	startup := time.Date(2024, 1, 15, 9, 30, 10, 0, time.Local) // Monday
+	storeSchedule(t, db, schedule{
+		ID:         "startup-duplicate",
+		Time:       "09:30",
+		DaysOfWeek: []int{int(startup.Weekday())},
+		Enabled:    true,
+	})
+
+	s := buildScheduler(ros, db)
+	s.lastHighLevelState = 1 // IDLE
+	s.checkStartupStatusAt(startup, startup)
+	s.checkStartupStatusAt(startup, startup.Add(20*time.Second))
+
+	require.Len(t, ros.ServiceCalls, 1, "LastRun must prevent a startup/status/ticker re-check from starting twice")
+}
 
 func TestCheckSchedules_TriggersHighLevelControl(t *testing.T) {
 	ros := types.NewMockRosProvider()
@@ -555,7 +631,11 @@ func TestSubscribeToStatus_UpdatesHighLevelState(t *testing.T) {
 	ros := types.NewMockRosProvider()
 	db := types.NewMockDBProvider()
 
-	s := &SchedulerProvider{rosProvider: ros, dbProvider: db}
+	s := &SchedulerProvider{
+		rosProvider:   ros,
+		dbProvider:    db,
+		statusUpdates: make(chan struct{}, 1),
+	}
 	s.subscribeToStatus()
 
 	// Dispatch a highLevelStatus message with state = 2 (AUTONOMOUS)
@@ -565,6 +645,12 @@ func TestSubscribeToStatus_UpdatesHighLevelState(t *testing.T) {
 
 	// Allow the synchronous mock callback to run
 	assert.Equal(t, uint8(2), s.lastHighLevelState)
+	assert.True(t, s.hasHighLevelStatus)
+	select {
+	case <-s.statusUpdates:
+	default:
+		t.Fatal("status update must wake the bounded startup retry")
+	}
 }
 
 func TestSubscribeToStatus_UpdatesEmergencyFlag(t *testing.T) {
