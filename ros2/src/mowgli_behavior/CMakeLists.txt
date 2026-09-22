@@ -656,6 +656,22 @@ if(BUILD_TESTING)
     ${action_msgs_TARGETS}
   )
 
+  # ---- test_strip_progress ----
+  # FollowStrip's progress cursor may advance at most kMaxProgressAdvanceM of
+  # path per update, so it cannot jump to the neighbouring serpentine swath.
+  ament_add_gtest(test_strip_progress
+    test/test_strip_progress.cpp
+  )
+
+  target_include_directories(test_strip_progress PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  target_link_libraries(test_strip_progress
+    ${geometry_msgs_TARGETS}
+  )
+
   # ---- test_unit_resume ----
   ament_add_gtest(test_unit_resume
     test/test_unit_resume.cpp
@@ -672,6 +688,20 @@ if(BUILD_TESTING)
   )
 
   target_include_directories(test_action_outcome PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # ---- test_mow_coverage_plausibility ----
+  # Unit tests for the pure coverage-completion plausibility cross-check
+  # (mow_coverage_plausibility.hpp, issue #680): point-in-polygon and the
+  # mowed-fraction computation against a synthetic mow_progress grid.
+  # Header-only helper, no ROS types at all → no coverage_nodes.cpp link.
+  ament_add_gtest(test_mow_coverage_plausibility
+    test/test_mow_coverage_plausibility.cpp
+  )
+
+  target_include_directories(test_mow_coverage_plausibility PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
   )

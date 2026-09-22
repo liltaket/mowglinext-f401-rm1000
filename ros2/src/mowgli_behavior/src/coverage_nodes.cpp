@@ -25,7 +25,9 @@
 #include "action_msgs/msg/goal_status.hpp"
 #include "mowgli_behavior/cancel_goal.hpp"
 #include "mowgli_behavior/coverage_persistence.hpp"
+#include "mowgli_behavior/mow_coverage_plausibility.hpp"
 #include "mowgli_behavior/status_snapshot.hpp"
+#include "mowgli_behavior/strip_progress.hpp"
 #include "mowgli_behavior/unit_resume.hpp"
 #include "tf2/exceptions.hpp"
 
@@ -427,6 +429,22 @@ BT::NodeStatus FollowStrip::onStart()
     coverage_plan_pub_ = ctx->node->create_publisher<nav_msgs::msg::Path>(
         "/controller_server/FollowCoveragePath/global_plan", rclcpp::QoS(1).transient_local());
   }
+  if (!controller_plan_sub_)
+  {
+    // FTC's turn fallback republishes the rest of the unit here when it rejoins
+    // the plan past a blocked turn (see ControllerRejoin in the header).
+    controller_plan_sub_ = ctx->node->create_subscription<nav_msgs::msg::Path>(
+        "/controller_server/FollowCoveragePath/global_plan",
+        rclcpp::QoS(1).transient_local(),
+        [this](nav_msgs::msg::Path::SharedPtr msg)
+        {
+          if (msg && !msg->poses.empty())
+          {
+            controller_rejoin_ = ControllerRejoin{rclcpp::Time(msg->header.stamp, RCL_ROS_TIME),
+                                                  msg->poses.front().pose};
+          }
+        });
+  }
   // Detour-and-continue: subscribe (latched) to the global costmap so an
   // obstacle-abort can be confirmed and a clear resume pose found. Created once.
   if (!costmap_sub_)
@@ -557,27 +575,34 @@ void FollowStrip::updateProgress(const std::shared_ptr<BTContext>& ctx)
   {
     return;  // no pose this tick — keep the last cursor
   }
-  // Monotonic, bounded forward nearest-pose search from the current cursor. The
-  // path can be thousands of poses, so we only scan a forward window (the robot
-  // can't have jumped far in one tick) — O(window), cheap to call every tick.
-  constexpr std::size_t kSearchWindow = 400;
-  const std::size_t end = std::min(poses.size(), path_progress_idx_ + kSearchWindow);
-  double best_d2 = std::numeric_limits<double>::max();
-  std::size_t best = path_progress_idx_;
-  for (std::size_t i = path_progress_idx_; i < end; ++i)
+  // The coverage controller rejoined this unit further on after a turn
+  // fallback: jump to the exact pose it resumed from — the skipped turn is out
+  // of reach of the bounded search below.
+  if (controller_rejoin_.has_value())
   {
-    const auto& p = poses[i].pose.position;
-    const double d2 = (p.x - rx) * (p.x - rx) + (p.y - ry) * (p.y - ry);
-    if (d2 < best_d2)
+    const ControllerRejoin rejoin = *controller_rejoin_;
+    controller_rejoin_.reset();
+    if (swath_goal_sent_ && !transit_active_ && rejoin.stamp > follow_goal_sent_stamp_)
     {
-      best_d2 = d2;
-      best = i;
+      const std::optional<std::size_t> k =
+          findControllerRejoin(poses, path_progress_idx_, rejoin.pose);
+      if (k.has_value())
+      {
+        RCLCPP_INFO(ctx->node->get_logger(),
+                    "FollowStrip: the coverage controller rejoined unit %zu/%zu past a blocked "
+                    "turn — progress cursor %zu -> %zu",
+                    swath_idx_ + 1,
+                    swaths_.size(),
+                    path_progress_idx_,
+                    *k);
+        path_progress_idx_ = *k;
+      }
     }
   }
-  if (best > path_progress_idx_)
-  {
-    path_progress_idx_ = best;
-  }
+  // Monotonic nearest-pose search over at most kMaxProgressAdvanceM of PATH
+  // ahead of the cursor (strip_progress.hpp) — never a pose count: 400 poses
+  // reached the neighbouring serpentine swath and the cursor jumped onto it.
+  path_progress_idx_ = advanceProgressCursor(poses, path_progress_idx_, rx, ry);
 }
 
 float FollowStrip::livePercent() const
@@ -703,9 +728,15 @@ bool FollowStrip::sendFollowGoal(const std::shared_ptr<BTContext>& ctx)
   goal.controller_id = "FollowCoveragePath";
   goal.goal_checker_id = ctx->coverage_goal_checker_id;
 
+  // A controller rejoin only ever refers to the goal about to be sent: drop
+  // anything heard before it (an earlier goal's, or a latched old message).
+  follow_goal_sent_stamp_ = ctx->node->now();
+  controller_rejoin_.reset();
+
   // Publish the segment on the coverage controller's global_plan topic BEFORE
   // dispatching the goal, so the PathProgressGoalChecker has the plan in hand
-  // by the time the controller starts ticking (FTC does not republish it).
+  // by the time the controller starts ticking (FTC does not republish it,
+  // except from a turn-fallback rejoin — see ControllerRejoin).
   if (coverage_plan_pub_)
   {
     coverage_plan_pub_->publish(goal.path);
@@ -942,6 +973,64 @@ std::optional<FollowStrip::TransitOutcome> FollowStrip::classifyFinishedTransit(
   return TransitOutcome{classifyTransitFailure(code, msg), code, msg};
 }
 
+void FollowStrip::checkCoveragePlausibility(const std::shared_ptr<BTContext>& ctx) const
+{
+  nav_msgs::msg::OccupancyGrid grid_copy;
+  {
+    std::lock_guard<std::mutex> lock(ctx->context_mutex);
+    grid_copy = ctx->latest_mow_progress;
+  }
+  if (grid_copy.data.empty())
+  {
+    // No mow_progress sample has ever arrived (e.g. map_server_node not yet
+    // publishing) — a missing signal is not evidence of a bad completion,
+    // so don't flag one.
+    return;
+  }
+
+  std::vector<std::pair<double, double>> outer;
+  outer.reserve(ctx->current_area_polygon.points.size());
+  for (const auto& p : ctx->current_area_polygon.points)
+  {
+    outer.emplace_back(static_cast<double>(p.x), static_cast<double>(p.y));
+  }
+
+  std::vector<std::vector<std::pair<double, double>>> holes;
+  holes.reserve(ctx->current_area_obstacles.size());
+  for (const auto& obstacle : ctx->current_area_obstacles)
+  {
+    std::vector<std::pair<double, double>> hole;
+    hole.reserve(obstacle.points.size());
+    for (const auto& p : obstacle.points)
+    {
+      hole.emplace_back(static_cast<double>(p.x), static_cast<double>(p.y));
+    }
+    holes.push_back(std::move(hole));
+  }
+
+  MowProgressGridView view;
+  view.resolution = grid_copy.info.resolution;
+  view.origin_x = grid_copy.info.origin.position.x;
+  view.origin_y = grid_copy.info.origin.position.y;
+  view.width = static_cast<int32_t>(grid_copy.info.width);
+  view.height = static_cast<int32_t>(grid_copy.info.height);
+  view.data = &grid_copy.data;
+
+  const double mowed_fraction = ComputeMowedFraction(view, outer, holes);
+  if (mowed_fraction < kMinPlausibleMowedFraction)
+  {
+    ctx->coverage_plausibility_warning = true;
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "FollowStrip: area %u reported fully mowed (every swath done) but "
+                "mow_progress shows only %.0f%% of its interior actually stamped mowed "
+                "(floor %.0f%%) — flagging COVERAGE_INCOMPLETE instead of a silent clean "
+                "completion (issue #680)",
+                area_idx_,
+                mowed_fraction * 100.0,
+                kMinPlausibleMowedFraction * 100.0);
+  }
+}
+
 BT::NodeStatus FollowStrip::onRunning()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
@@ -1019,6 +1108,7 @@ BT::NodeStatus FollowStrip::onRunning()
     if (done.size() >= swaths_.size())
     {
       ctx->completed_areas.insert(area_idx_);
+      checkCoveragePlausibility(ctx);
       saveCoverageResumeState(*ctx);
     }
     if (swaths_skipped_ >= swaths_.size())
@@ -3119,6 +3209,14 @@ BT::NodeStatus PlanCoverageArea::onRunning()
     ctx->current_strip_segments = wrapped.result->segments;
     ctx->current_strip_path = wrapped.result->full_path;
     ctx->current_strip_subpaths = wrapped.result->drivable_subpaths;
+
+    // Area geometry for FollowStrip's end-of-pass coverage-plausibility
+    // cross-check (issue #680) — same get_mowing_area response as area_
+    // above, just handed to the context alongside the rest of the plan.
+    // area_.obstacles only (never proposed_obstacles — a pending dig
+    // proposal is not a real hole, root CLAUDE.md Invariant 16).
+    ctx->current_area_polygon = area_.area;
+    ctx->current_area_obstacles = area_.obstacles;
 
     // Publish the full plan for the GUI/Foxglove (latched). The per-segment
     // FollowCoveragePath/global_plan (goal checker) is a separate topic.
