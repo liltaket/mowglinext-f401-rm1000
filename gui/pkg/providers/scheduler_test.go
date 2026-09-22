@@ -27,8 +27,8 @@ func acceptStart(_ string, _ any, res any) {
 }
 
 // buildScheduler creates a SchedulerProvider backed by mocks without starting
-// the background goroutine. subscribeToStatus is still called so mock
-// subscribers can be driven via Dispatch.
+// the background goroutine. Tests set coverageResumeKnown because they assign
+// the scheduler state directly instead of receiving the latched ROS topic.
 func buildScheduler(ros *types.MockRosProvider, db *types.MockDBProvider) *SchedulerProvider {
 	// A healthy behavior_tree_node ACCEPTS the start; tests that need a
 	// rejection install their own responder before calling this.
@@ -36,8 +36,10 @@ func buildScheduler(ros *types.MockRosProvider, db *types.MockDBProvider) *Sched
 		ros.ServiceResponder = acceptStart
 	}
 	return &SchedulerProvider{
-		rosProvider: ros,
-		dbProvider:  db,
+		rosProvider:            ros,
+		dbProvider:             db,
+		lastHighLevelStateName: "IDLE",
+		coverageResumeKnown:    true,
 	}
 }
 
@@ -132,6 +134,14 @@ func TestSafeToStart_IdleNoEmergency(t *testing.T) {
 	assert.True(t, s.safeToStart())
 }
 
+func TestSafeToStart_IdleDockedNoEmergency(t *testing.T) {
+	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
+	s.lastHighLevelState = 1 // IDLE
+	s.lastHighLevelStateName = "IDLE_DOCKED"
+	s.lastEmergency = false
+	assert.True(t, s.safeToStart())
+}
+
 func TestSafeToStart_EmergencyActive(t *testing.T) {
 	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
 	s.lastHighLevelState = 1
@@ -164,25 +174,37 @@ func TestSafeToStart_ManualMowing(t *testing.T) {
 	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
 	s.lastHighLevelState = 4 // MANUAL_MOWING
 	s.lastEmergency = false
-	// Manual mowing is not blocked — scheduler can queue the next run
-	// (firmware / BT will arbitrate), so safeToStart returns true.
-	assert.True(t, s.safeToStart())
+	assert.False(t, s.safeToStart())
 }
 
-// The blade-off dock transit after a FINISHED mow reports AUTONOMOUS only so
-// the firmware will drive the wheels (HL_MODE_IDLE is a wheel hard stop). The
-// run itself is over, so a schedule due in that window must still fire — this
-// pins the behaviour that existed before the state was raised from IDLE to
-// AUTONOMOUS, so the motion fix does not silently start skipping schedules.
-func TestSafeToStart_PostMowDockTransitStaysStartable(t *testing.T) {
+// These state names are reported as IDLE while the BT is holding a resumable
+// mowing session. COMMAND_START in the charging holds is a manual-resume
+// request, so a due schedule must never send it.
+func TestSafeToStart_ResumableMowingPauses(t *testing.T) {
+	for _, name := range []string{
+		"CHARGING",
+		"CRITICAL_BATTERY_CHARGING",
+		"RAIN_WAITING",
+	} {
+		s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
+		s.lastHighLevelState = 1 // IDLE
+		s.lastHighLevelStateName = name
+		s.lastEmergency = false
+		assert.False(t, s.safeToStart(), "state_name %s must not be startable", name)
+	}
+}
+
+// MOWING_COMPLETE still drives the robot home under an active autonomous
+// command, so a scheduler must not replace that command with a new start.
+func TestSafeToStart_PostMowDockTransitStaysBlocked(t *testing.T) {
 	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
 	s.lastHighLevelState = 2 // AUTONOMOUS (wheel gate held open)
 	s.lastHighLevelStateName = "MOWING_COMPLETE"
 	s.lastEmergency = false
-	assert.True(t, s.safeToStart())
+	assert.False(t, s.safeToStart())
 }
 
-// An emergency still wins over the post-mow exemption.
+// An emergency also blocks the in-progress post-mow dock transit.
 func TestSafeToStart_PostMowDockTransitBlockedByEmergency(t *testing.T) {
 	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
 	s.lastHighLevelState = 2
@@ -210,6 +232,22 @@ func TestSafeToStart_OtherDockTransitsStayBlocked(t *testing.T) {
 		s.lastEmergency = false
 		assert.False(t, s.safeToStart(), "state_name %s must not be startable", name)
 	}
+}
+
+func TestSafeToStart_RequiresKnownResumeAvailability(t *testing.T) {
+	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
+	s.lastHighLevelState = 1
+	s.lastHighLevelStateName = "IDLE"
+	s.coverageResumeKnown = false
+	assert.False(t, s.safeToStart())
+}
+
+func TestSafeToStart_ResumableIdleSessionStaysBlocked(t *testing.T) {
+	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
+	s.lastHighLevelState = 1
+	s.lastHighLevelStateName = "IDLE"
+	s.coverageResumeAvailable = true
+	assert.False(t, s.safeToStart())
 }
 
 // --------------------------------------------------------------------------
@@ -241,6 +279,43 @@ func TestCheckSchedules_TriggersHighLevelControl(t *testing.T) {
 	req, ok := ros.ServiceCalls[0].Req.(*mowgli.HighLevelControlReq)
 	require.True(t, ok, "request should be *mowgli.HighLevelControlReq")
 	assert.Equal(t, uint8(1), req.Command, "COMMAND_START must be 1")
+}
+
+func TestCheckSchedules_DoesNotStartExistingOrResumableSession(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		state           uint8
+		stateName       string
+		resumeAvailable bool
+	}{
+		{name: "manual mowing", state: 4, stateName: "MANUAL_MOWING"},
+		{name: "charging hold", state: 1, stateName: "CHARGING"},
+		{name: "critical charging hold", state: 1, stateName: "CRITICAL_BATTERY_CHARGING"},
+		{name: "rain hold", state: 1, stateName: "RAIN_WAITING"},
+		{name: "resumable idle", state: 1, stateName: "IDLE", resumeAvailable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ros := types.NewMockRosProvider()
+			db := types.NewMockDBProvider()
+			now := time.Now()
+			sched := schedule{
+				ID:         "due",
+				Time:       now.Format("15:04"),
+				DaysOfWeek: []int{int(now.Weekday())},
+				Enabled:    true,
+			}
+			storeSchedule(t, db, sched)
+
+			s := buildScheduler(ros, db)
+			s.lastHighLevelState = tc.state
+			s.lastHighLevelStateName = tc.stateName
+			s.coverageResumeAvailable = tc.resumeAvailable
+			s.checkSchedules()
+
+			assert.Empty(t, ros.ServiceCalls)
+			assert.Nil(t, readSchedule(t, db, sched.ID).LastRun)
+		})
+	}
 }
 
 func TestCheckSchedules_DisabledScheduleSkipped(t *testing.T) {
@@ -480,4 +555,16 @@ func TestSubscribeToStatus_UpdatesEmergencyFlag(t *testing.T) {
 	ros.Dispatch("emergency", msg)
 
 	assert.True(t, s.lastEmergency)
+}
+
+func TestSubscribeToStatus_UpdatesCoverageResumeAvailability(t *testing.T) {
+	ros := types.NewMockRosProvider()
+	db := types.NewMockDBProvider()
+
+	s := &SchedulerProvider{rosProvider: ros, dbProvider: db}
+	s.subscribeToStatus()
+	ros.Dispatch("coverageResumeAvailable", []byte(`{"data":true}`))
+
+	assert.True(t, s.coverageResumeKnown)
+	assert.True(t, s.coverageResumeAvailable)
 }
