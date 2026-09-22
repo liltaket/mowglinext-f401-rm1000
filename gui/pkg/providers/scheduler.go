@@ -99,14 +99,7 @@ func (s *SchedulerProvider) subscribeToStatus() {
 		s.lastHighLevelStateName = hls.StateName
 		s.hasHighLevelStatus = true
 		s.mu.Unlock()
-		// A scheduler may start part-way through a due minute, before the
-		// retained high-level status arrives. Wake its startup window after
-		// every status update: the first update can legitimately be NULL while
-		// the behavior tree is still transitioning.
-		select {
-		case s.statusUpdates <- struct{}{}:
-		default:
-		}
+		s.wakeStartupRetry()
 	}); err != nil {
 		logrus.Warnf("Scheduler: failed to subscribe to highLevelStatus: %v", err)
 	}
@@ -144,6 +137,7 @@ func (s *SchedulerProvider) subscribeToStatus() {
 		s.coverageSessionActive = session.SessionActive
 		s.coverageSessionKnown = true
 		s.mu.Unlock()
+		s.wakeStartupRetry()
 	}); err != nil {
 		logrus.Warnf("Scheduler: failed to subscribe to coverageSession: %v", err)
 	}
@@ -160,8 +154,20 @@ func (s *SchedulerProvider) subscribeToStatus() {
 		s.coverageResumeAvailable = available.Data
 		s.coverageResumeKnown = true
 		s.mu.Unlock()
+		s.wakeStartupRetry()
 	}); err != nil {
 		logrus.Warnf("Scheduler: failed to subscribe to coverageResumeAvailable: %v", err)
+	}
+}
+
+// wakeStartupRetry rechecks the bounded startup minute when any input to
+// safeToStart changes. The retained high-level status and coverage provenance
+// can arrive in either order, so waking only for status could leave an on-time
+// schedule blocked after its final required input becomes known.
+func (s *SchedulerProvider) wakeStartupRetry() {
+	select {
+	case s.statusUpdates <- struct{}{}:
+	default:
 	}
 }
 
@@ -179,7 +185,7 @@ func (s *SchedulerProvider) run() {
 		case <-ticker.C:
 			s.checkSchedules()
 		case <-s.statusUpdates:
-			s.checkStartupStatusAt(startedAt, time.Now())
+			s.checkStartupUpdateAt(startedAt, time.Now())
 		}
 	}
 }
@@ -196,10 +202,10 @@ func (s *SchedulerProvider) checkSchedulesAt(now time.Time) {
 	s.checkSchedulesAtLocked(now)
 }
 
-// checkStartupStatusAt retries a startup check only while it remains in the
-// calendar minute in which the backend started. This lets a delayed IDLE
-// status unlock an on-time run without backfilling missed schedules.
-func (s *SchedulerProvider) checkStartupStatusAt(startedAt, now time.Time) {
+// checkStartupUpdateAt retries a startup check only while it remains in the
+// calendar minute in which the backend started. This lets delayed admission
+// inputs unlock an on-time run without backfilling missed schedules.
+func (s *SchedulerProvider) checkStartupUpdateAt(startedAt, now time.Time) {
 	if startedAt.Format("2006-01-02 15:04") != now.Format("2006-01-02 15:04") {
 		return
 	}

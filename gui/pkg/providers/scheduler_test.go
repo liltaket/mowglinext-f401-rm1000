@@ -284,7 +284,7 @@ func TestSafeToStart_ResumableIdleSessionStaysBlocked(t *testing.T) {
 // checkSchedules — integration-style tests using mocks
 // --------------------------------------------------------------------------
 
-func TestCheckStartupStatusAt_DelayedIdleStartsCurrentScheduledMinute(t *testing.T) {
+func TestCheckStartupUpdateAt_DelayedIdleStartsCurrentScheduledMinute(t *testing.T) {
 	ros := types.NewMockRosProvider()
 	db := types.NewMockDBProvider()
 	startup := time.Date(2024, 1, 15, 9, 30, 10, 0, time.Local) // Monday
@@ -304,18 +304,99 @@ func TestCheckStartupStatusAt_DelayedIdleStartsCurrentScheduledMinute(t *testing
 	// transitioning. It must not consume the startup-minute retry.
 	s.hasHighLevelStatus = true
 	s.lastHighLevelState = 0 // NULL / transitional
-	s.checkStartupStatusAt(startup, startup.Add(5*time.Second))
+	s.checkStartupUpdateAt(startup, startup.Add(5*time.Second))
 	assert.Empty(t, ros.ServiceCalls)
 
 	s.lastHighLevelState = 1 // IDLE
-	s.checkStartupStatusAt(startup, startup.Add(10*time.Second))
+	s.checkStartupUpdateAt(startup, startup.Add(10*time.Second))
 	s.checkSchedulesAt(startup)
 
 	require.Len(t, ros.ServiceCalls, 1, "startup during a due minute must not wait for the next ticker minute")
 	assert.NotNil(t, readSchedule(t, db, "startup-window").LastRun)
 }
 
-func TestCheckStartupStatusAt_DoesNotFireStaleSchedule(t *testing.T) {
+func processStartupUpdate(t *testing.T, s *SchedulerProvider, startedAt, now time.Time) {
+	t.Helper()
+	select {
+	case <-s.statusUpdates:
+		s.checkStartupUpdateAt(startedAt, now)
+	default:
+		t.Fatal("admission input update must wake the bounded startup retry")
+	}
+}
+
+func TestStartupWindow_RechecksWhenAdmissionSignalsArriveInEitherOrder(t *testing.T) {
+	startup := time.Date(2024, 1, 15, 9, 30, 10, 0, time.Local) // Monday
+
+	for _, tc := range []struct {
+		name    string
+		updates []struct {
+			topic string
+			msg   []byte
+		}
+	}{
+		{
+			name: "high-level status before coverage provenance",
+			updates: []struct {
+				topic string
+				msg   []byte
+			}{
+				{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"CHARGING"}`)},
+				{topic: "coverageSession", msg: []byte(`{"session_active":false}`)},
+				{topic: "coverageResumeAvailable", msg: []byte(`{"data":false}`)},
+			},
+		},
+		{
+			name: "coverage provenance before high-level status",
+			updates: []struct {
+				topic string
+				msg   []byte
+			}{
+				{topic: "coverageSession", msg: []byte(`{"session_active":false}`)},
+				{topic: "coverageResumeAvailable", msg: []byte(`{"data":false}`)},
+				{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"CHARGING"}`)},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ros := types.NewMockRosProvider()
+			ros.ServiceResponder = acceptStart
+			db := types.NewMockDBProvider()
+			storeSchedule(t, db, schedule{
+				ID:         "startup-signals",
+				Time:       "09:30",
+				DaysOfWeek: []int{int(startup.Weekday())},
+				Enabled:    true,
+			})
+
+			s := &SchedulerProvider{
+				rosProvider:   ros,
+				dbProvider:    db,
+				statusUpdates: make(chan struct{}, 1),
+			}
+			s.subscribeToStatus()
+			s.checkSchedulesAt(startup)
+			assert.Empty(t, ros.ServiceCalls, "unknown admission inputs must fail closed")
+
+			for i, update := range tc.updates {
+				ros.Dispatch(update.topic, update.msg)
+				processStartupUpdate(t, s, startup, startup.Add(time.Duration(i+1)*time.Second))
+				if i < len(tc.updates)-1 {
+					assert.Empty(t, ros.ServiceCalls, "partial admission provenance must fail closed")
+				}
+			}
+
+			require.Len(t, ros.ServiceCalls, 1, "the final required signal must start the current scheduled minute exactly once")
+
+			// Further retained updates in the same minute must not double-start.
+			ros.Dispatch("highLevelStatus", []byte(`{"state":1,"state_name":"CHARGING"}`))
+			processStartupUpdate(t, s, startup, startup.Add(10*time.Second))
+			assert.Len(t, ros.ServiceCalls, 1)
+		})
+	}
+}
+
+func TestCheckStartupUpdateAt_DoesNotFireStaleSchedule(t *testing.T) {
 	ros := types.NewMockRosProvider()
 	db := types.NewMockDBProvider()
 	startup := time.Date(2024, 1, 15, 9, 31, 10, 0, time.Local) // Monday
@@ -328,12 +409,12 @@ func TestCheckStartupStatusAt_DoesNotFireStaleSchedule(t *testing.T) {
 
 	s := buildScheduler(ros, db)
 	s.lastHighLevelState = 1 // IDLE
-	s.checkStartupStatusAt(startup.Add(-time.Minute), startup)
+	s.checkStartupUpdateAt(startup.Add(-time.Minute), startup)
 
 	assert.Empty(t, ros.ServiceCalls, "startup must not backfill an already elapsed minute")
 }
 
-func TestCheckStartupStatusAt_RepeatedStatusDoesNotDuplicateAcceptedRun(t *testing.T) {
+func TestCheckStartupUpdateAt_RepeatedUpdateDoesNotDuplicateAcceptedRun(t *testing.T) {
 	ros := types.NewMockRosProvider()
 	db := types.NewMockDBProvider()
 	startup := time.Date(2024, 1, 15, 9, 30, 10, 0, time.Local) // Monday
@@ -346,8 +427,8 @@ func TestCheckStartupStatusAt_RepeatedStatusDoesNotDuplicateAcceptedRun(t *testi
 
 	s := buildScheduler(ros, db)
 	s.lastHighLevelState = 1 // IDLE
-	s.checkStartupStatusAt(startup, startup)
-	s.checkStartupStatusAt(startup, startup.Add(20*time.Second))
+	s.checkStartupUpdateAt(startup, startup)
+	s.checkStartupUpdateAt(startup, startup.Add(20*time.Second))
 
 	require.Len(t, ros.ServiceCalls, 1, "LastRun must prevent a startup/status/ticker re-check from starting twice")
 }
