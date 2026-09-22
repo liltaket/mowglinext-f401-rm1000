@@ -40,18 +40,22 @@ type SchedulerProvider struct {
 	soilProvider types.ISoilProvider
 
 	mu                     sync.RWMutex
+	checkMu                sync.Mutex
 	lastHighLevelState     uint8
 	lastHighLevelStateName string
+	hasHighLevelStatus     bool
 	lastEmergency          bool
+	statusUpdates          chan struct{}
 }
 
 // NewSchedulerProvider creates and starts the scheduler background goroutine.
 // soilProvider may be nil, in which case no soil gate is applied.
 func NewSchedulerProvider(rosProvider types.IRosProvider, dbProvider types.IDBProvider, soilProvider types.ISoilProvider) *SchedulerProvider {
 	s := &SchedulerProvider{
-		rosProvider:  rosProvider,
-		dbProvider:   dbProvider,
-		soilProvider: soilProvider,
+		rosProvider:   rosProvider,
+		dbProvider:    dbProvider,
+		soilProvider:  soilProvider,
+		statusUpdates: make(chan struct{}, 1),
 	}
 	s.subscribeToStatus()
 	go s.run()
@@ -88,7 +92,16 @@ func (s *SchedulerProvider) subscribeToStatus() {
 		s.mu.Lock()
 		s.lastHighLevelState = hls.State
 		s.lastHighLevelStateName = hls.StateName
+		s.hasHighLevelStatus = true
 		s.mu.Unlock()
+		// A scheduler may start part-way through a due minute, before the
+		// retained high-level status arrives. Wake its startup window after
+		// every status update: the first update can legitimately be NULL while
+		// the behavior tree is still transitioning.
+		select {
+		case s.statusUpdates <- struct{}{}:
+		default:
+		}
 	}); err != nil {
 		logrus.Warnf("Scheduler: failed to subscribe to highLevelStatus: %v", err)
 	}
@@ -117,21 +130,53 @@ func (s *SchedulerProvider) subscribeToStatus() {
 }
 
 func (s *SchedulerProvider) run() {
+	startedAt := time.Now()
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		s.checkSchedules()
+
+	// Do not wait a full minute after startup: schedules are evaluated for the
+	// current minute immediately. safeToStart keeps this fail-closed until the
+	// first high-level status is received.
+	s.checkSchedulesAt(startedAt)
+	for {
+		select {
+		case <-ticker.C:
+			s.checkSchedules()
+		case <-s.statusUpdates:
+			s.checkStartupStatusAt(startedAt, time.Now())
+		}
 	}
 }
 
 func (s *SchedulerProvider) checkSchedules() {
+	s.checkSchedulesAt(time.Now())
+}
+
+// checkSchedulesAt evaluates schedules at now. Keeping the clock explicit
+// makes the minute-boundary policy deterministic to test.
+func (s *SchedulerProvider) checkSchedulesAt(now time.Time) {
+	s.checkMu.Lock()
+	defer s.checkMu.Unlock()
+	s.checkSchedulesAtLocked(now)
+}
+
+// checkStartupStatusAt retries a startup check only while it remains in the
+// calendar minute in which the backend started. This lets a delayed IDLE
+// status unlock an on-time run without backfilling missed schedules.
+func (s *SchedulerProvider) checkStartupStatusAt(startedAt, now time.Time) {
+	if startedAt.Format("2006-01-02 15:04") != now.Format("2006-01-02 15:04") {
+		return
+	}
+	s.checkSchedulesAt(now)
+}
+
+func (s *SchedulerProvider) checkSchedulesAtLocked(now time.Time) {
 	keys, err := s.dbProvider.KeysWithSuffix(schedulerKeyPrefix)
 	if err != nil {
 		logrus.Warnf("Scheduler: failed to list schedules: %v", err)
 		return
 	}
 
-	now := time.Now()
 	currentDay := int(now.Weekday())
 	currentTime := now.Format("15:04")
 
@@ -251,6 +296,7 @@ func (s *SchedulerProvider) persistSkip(sched schedule, reason string, now time.
 
 // safeToStart returns true when it is safe to send COMMAND_START.
 // It blocks mowing when:
+//   - no high-level status has arrived since startup, or
 //   - an emergency is active (latched or active), or
 //   - the robot is already in autonomous (2) or recording (3) state,
 //     EXCEPT the post-mow dock transit (state 2, state_name MOWING_COMPLETE),
@@ -267,10 +313,11 @@ func (s *SchedulerProvider) safeToStart() bool {
 	s.mu.RLock()
 	state := s.lastHighLevelState
 	stateName := s.lastHighLevelStateName
+	hasHighLevelStatus := s.hasHighLevelStatus
 	emergency := s.lastEmergency
 	s.mu.RUnlock()
 
-	if emergency {
+	if !hasHighLevelStatus || emergency {
 		return false
 	}
 	// The blade-off dock transit that follows a FINISHED mow stays startable:
