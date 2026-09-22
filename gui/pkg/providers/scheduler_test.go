@@ -39,6 +39,7 @@ func buildScheduler(ros *types.MockRosProvider, db *types.MockDBProvider) *Sched
 		rosProvider:            ros,
 		dbProvider:             db,
 		lastHighLevelStateName: "IDLE",
+		coverageSessionKnown:   true,
 		coverageResumeKnown:    true,
 	}
 }
@@ -142,6 +143,13 @@ func TestSafeToStart_IdleDockedNoEmergency(t *testing.T) {
 	assert.True(t, s.safeToStart())
 }
 
+func TestSafeToStart_IdleChargingWithoutActiveSession(t *testing.T) {
+	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
+	s.lastHighLevelState = 1 // IDLE
+	s.lastHighLevelStateName = "CHARGING"
+	assert.True(t, s.safeToStart())
+}
+
 func TestSafeToStart_EmergencyActive(t *testing.T) {
 	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
 	s.lastHighLevelState = 1
@@ -177,12 +185,10 @@ func TestSafeToStart_ManualMowing(t *testing.T) {
 	assert.False(t, s.safeToStart())
 }
 
-// These state names are reported as IDLE while the BT is holding a resumable
-// mowing session. COMMAND_START in the charging holds is a manual-resume
-// request, so a due schedule must never send it.
+// These non-charging state names are reported as IDLE while the BT is holding
+// a resumable mow, so a due schedule must never send COMMAND_START.
 func TestSafeToStart_ResumableMowingPauses(t *testing.T) {
 	for _, name := range []string{
-		"CHARGING",
 		"CRITICAL_BATTERY_CHARGING",
 		"RAIN_WAITING",
 	} {
@@ -192,6 +198,14 @@ func TestSafeToStart_ResumableMowingPauses(t *testing.T) {
 		s.lastEmergency = false
 		assert.False(t, s.safeToStart(), "state_name %s must not be startable", name)
 	}
+}
+
+func TestSafeToStart_ActiveChargeHold(t *testing.T) {
+	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
+	s.lastHighLevelState = 1 // IDLE
+	s.lastHighLevelStateName = "CHARGING"
+	s.coverageSessionActive = true
+	assert.False(t, s.safeToStart())
 }
 
 // MOWING_COMPLETE still drives the robot home under an active autonomous
@@ -242,6 +256,14 @@ func TestSafeToStart_RequiresKnownResumeAvailability(t *testing.T) {
 	assert.False(t, s.safeToStart())
 }
 
+func TestSafeToStart_RequiresKnownCoverageSession(t *testing.T) {
+	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
+	s.lastHighLevelState = 1
+	s.lastHighLevelStateName = "CHARGING"
+	s.coverageSessionKnown = false
+	assert.False(t, s.safeToStart())
+}
+
 func TestSafeToStart_ResumableIdleSessionStaysBlocked(t *testing.T) {
 	s := buildScheduler(types.NewMockRosProvider(), types.NewMockDBProvider())
 	s.lastHighLevelState = 1
@@ -286,10 +308,11 @@ func TestCheckSchedules_DoesNotStartExistingOrResumableSession(t *testing.T) {
 		name            string
 		state           uint8
 		stateName       string
+		sessionActive   bool
 		resumeAvailable bool
 	}{
 		{name: "manual mowing", state: 4, stateName: "MANUAL_MOWING"},
-		{name: "charging hold", state: 1, stateName: "CHARGING"},
+		{name: "charging hold", state: 1, stateName: "CHARGING", sessionActive: true},
 		{name: "critical charging hold", state: 1, stateName: "CRITICAL_BATTERY_CHARGING"},
 		{name: "rain hold", state: 1, stateName: "RAIN_WAITING"},
 		{name: "resumable idle", state: 1, stateName: "IDLE", resumeAvailable: true},
@@ -309,6 +332,7 @@ func TestCheckSchedules_DoesNotStartExistingOrResumableSession(t *testing.T) {
 			s := buildScheduler(ros, db)
 			s.lastHighLevelState = tc.state
 			s.lastHighLevelStateName = tc.stateName
+			s.coverageSessionActive = tc.sessionActive
 			s.coverageResumeAvailable = tc.resumeAvailable
 			s.checkSchedules()
 
@@ -567,4 +591,16 @@ func TestSubscribeToStatus_UpdatesCoverageResumeAvailability(t *testing.T) {
 
 	assert.True(t, s.coverageResumeKnown)
 	assert.True(t, s.coverageResumeAvailable)
+}
+
+func TestSubscribeToStatus_UpdatesCoverageSession(t *testing.T) {
+	ros := types.NewMockRosProvider()
+	db := types.NewMockDBProvider()
+
+	s := &SchedulerProvider{rosProvider: ros, dbProvider: db}
+	s.subscribeToStatus()
+	ros.Dispatch("coverageSession", []byte(`{"session_active":true}`))
+
+	assert.True(t, s.coverageSessionKnown)
+	assert.True(t, s.coverageSessionActive)
 }

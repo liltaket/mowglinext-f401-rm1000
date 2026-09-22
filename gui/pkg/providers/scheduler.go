@@ -44,6 +44,8 @@ type SchedulerProvider struct {
 	lastHighLevelState      uint8
 	lastHighLevelStateName  string
 	lastEmergency           bool
+	coverageSessionActive   bool
+	coverageSessionKnown    bool
 	coverageResumeAvailable bool
 	coverageResumeKnown     bool
 }
@@ -116,6 +118,21 @@ func (s *SchedulerProvider) subscribeToStatus() {
 		s.mu.Unlock()
 	}); err != nil {
 		logrus.Warnf("Scheduler: failed to subscribe to emergency: %v", err)
+	}
+
+	// coverageSession identifies a live COMMAND_START session even while its
+	// high-level state is IDLE (for example, a mid-session recharge hold).
+	if err := s.rosProvider.Subscribe("coverageSession", "scheduler-session", 0, func(msg []byte) {
+		var session mowgli.CoverageSession
+		if err := json.Unmarshal(msg, &session); err != nil {
+			return
+		}
+		s.mu.Lock()
+		s.coverageSessionActive = session.SessionActive
+		s.coverageSessionKnown = true
+		s.mu.Unlock()
+	}); err != nil {
+		logrus.Warnf("Scheduler: failed to subscribe to coverageSession: %v", err)
 	}
 
 	// coverageResumeAvailable is latched by the behavior tree. It is the
@@ -269,9 +286,10 @@ func (s *SchedulerProvider) persistSkip(sched schedule, reason string, now time.
 }
 
 // safeToStart returns true when it is safe to send COMMAND_START.
-// It admits starts only from a known, non-resumable idle status. In particular,
-// a scheduler must never send COMMAND_START into an active session: the charge
-// holds interpret it as an operator manual-resume request.
+// It admits starts only from known, non-resumable idle status and coverage
+// provenance. A charge hold belongs to a live session only when
+// CoverageSession.session_active is true; only then would COMMAND_START be an
+// operator manual-resume request.
 //
 // HIGH_LEVEL_STATE constants:
 //
@@ -285,17 +303,26 @@ func (s *SchedulerProvider) safeToStart() bool {
 	state := s.lastHighLevelState
 	stateName := s.lastHighLevelStateName
 	emergency := s.lastEmergency
+	sessionActive := s.coverageSessionActive
+	sessionKnown := s.coverageSessionKnown
 	resumeAvailable := s.coverageResumeAvailable
 	resumeKnown := s.coverageResumeKnown
 	s.mu.RUnlock()
 
-	if emergency || !resumeKnown {
+	if emergency || !sessionKnown || !resumeKnown {
 		return false
 	}
-	if state != 1 || resumeAvailable || isResumableMowingPause(stateName) {
+	if state != 1 || sessionActive || resumeAvailable {
 		return false
 	}
-	return stateName == "IDLE" || stateName == "IDLE_DOCKED"
+	switch stateName {
+	case "IDLE", "IDLE_DOCKED", "CHARGING":
+		return true
+	case "CRITICAL_BATTERY_CHARGING", "RAIN_WAITING":
+		return false
+	default:
+		return false
+	}
 }
 
 func (s *SchedulerProvider) shouldRun(sched *schedule, currentDay int, currentTime string, now time.Time) bool {
