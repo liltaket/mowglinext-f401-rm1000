@@ -342,10 +342,12 @@ func (d *NotifyDetector) pastCooldown(key string, now time.Time) bool {
 }
 
 // notificationCooldownKey keeps every message-scoped cooldown intact except
-// the combined zone transition. Area labels and coverage are presentation
-// details, so they deliberately do not weaken repeat suppression.
+// zone events. Zone labels and coverage are presentation details, so they
+// deliberately do not weaken repeat suppression.
 func notificationCooldownKey(message string, params map[string]string) string {
 	switch message {
+	case NotifyMsgZoneStarted, NotifyMsgZoneFinished:
+		return message + ":" + params["areaIndex"]
 	case NotifyMsgZoneChanged:
 		return message + ":" + params["areaIndex"] + ":" + params["nextIndex"]
 	default:
