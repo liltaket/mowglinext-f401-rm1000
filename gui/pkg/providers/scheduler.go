@@ -46,6 +46,7 @@ type SchedulerProvider struct {
 	lastHighLevelStateName  string
 	hasHighLevelStatus      bool
 	lastEmergency           bool
+	highLevelEmergency      bool
 	coverageSessionActive   bool
 	coverageSessionKnown    bool
 	coverageResumeAvailable bool
@@ -70,7 +71,9 @@ func NewSchedulerProvider(rosProvider types.IRosProvider, dbProvider types.IDBPr
 // subscribeToStatus subscribes to highLevelStatus and emergency so that the
 // scheduler can perform pre-flight safety checks without an extra service call.
 func (s *SchedulerProvider) subscribeToStatus() {
-	// highLevelStatus — tracks robot operational state (idle/autonomous/recording)
+	// highLevelStatus — tracks robot operational state and its co-reported
+	// emergency snapshot. Keep it separate from the hardware emergency topic so
+	// an older HLS snapshot can never clear a newer hardware emergency.
 	if err := s.rosProvider.Subscribe("highLevelStatus", "scheduler-hls", 0, func(msg []byte) {
 		var hls mowgli.HighLevelStatus
 		if err := json.Unmarshal(msg, &hls); err != nil {
@@ -97,6 +100,7 @@ func (s *SchedulerProvider) subscribeToStatus() {
 		s.mu.Lock()
 		s.lastHighLevelState = hls.State
 		s.lastHighLevelStateName = hls.StateName
+		s.highLevelEmergency = hls.Emergency
 		s.hasHighLevelStatus = true
 		s.mu.Unlock()
 		s.wakeStartupRetry()
@@ -122,6 +126,7 @@ func (s *SchedulerProvider) subscribeToStatus() {
 		s.mu.Lock()
 		s.lastEmergency = emg.ActiveEmergency
 		s.mu.Unlock()
+		s.wakeStartupRetry()
 	}); err != nil {
 		logrus.Warnf("Scheduler: failed to subscribe to emergency: %v", err)
 	}
@@ -354,7 +359,7 @@ func (s *SchedulerProvider) safeToStart() bool {
 	state := s.lastHighLevelState
 	stateName := s.lastHighLevelStateName
 	hasHighLevelStatus := s.hasHighLevelStatus
-	emergency := s.lastEmergency
+	emergency := s.lastEmergency || s.highLevelEmergency
 	sessionActive := s.coverageSessionActive
 	sessionKnown := s.coverageSessionKnown
 	resumeAvailable := s.coverageResumeAvailable

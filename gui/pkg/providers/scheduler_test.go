@@ -341,7 +341,7 @@ func TestStartupWindow_RechecksWhenAdmissionSignalsArriveInEitherOrder(t *testin
 				topic string
 				msg   []byte
 			}{
-				{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"CHARGING"}`)},
+				{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"CHARGING","emergency":false}`)},
 				{topic: "coverageSession", msg: []byte(`{"session_active":false}`)},
 				{topic: "coverageResumeAvailable", msg: []byte(`{"data":false}`)},
 			},
@@ -354,7 +354,7 @@ func TestStartupWindow_RechecksWhenAdmissionSignalsArriveInEitherOrder(t *testin
 			}{
 				{topic: "coverageSession", msg: []byte(`{"session_active":false}`)},
 				{topic: "coverageResumeAvailable", msg: []byte(`{"data":false}`)},
-				{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"CHARGING"}`)},
+				{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"CHARGING","emergency":false}`)},
 			},
 		},
 	} {
@@ -389,9 +389,114 @@ func TestStartupWindow_RechecksWhenAdmissionSignalsArriveInEitherOrder(t *testin
 			require.Len(t, ros.ServiceCalls, 1, "the final required signal must start the current scheduled minute exactly once")
 
 			// Further retained updates in the same minute must not double-start.
-			ros.Dispatch("highLevelStatus", []byte(`{"state":1,"state_name":"CHARGING"}`))
+			ros.Dispatch("highLevelStatus", []byte(`{"state":1,"state_name":"CHARGING","emergency":false}`))
 			processStartupUpdate(t, s, startup, startup.Add(10*time.Second))
 			assert.Len(t, ros.ServiceCalls, 1)
+		})
+	}
+}
+
+func TestStartupWindow_HighLevelEmergencyBlocksStartInEitherSignalOrder(t *testing.T) {
+	startup := time.Date(2024, 1, 15, 9, 30, 10, 0, time.Local) // Monday
+
+	for _, updates := range [][]struct {
+		topic string
+		msg   []byte
+	}{
+		{
+			{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"IDLE","emergency":true}`)},
+			{topic: "coverageSession", msg: []byte(`{"session_active":false}`)},
+			{topic: "coverageResumeAvailable", msg: []byte(`{"data":false}`)},
+		},
+		{
+			{topic: "coverageSession", msg: []byte(`{"session_active":false}`)},
+			{topic: "coverageResumeAvailable", msg: []byte(`{"data":false}`)},
+			{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"IDLE","emergency":true}`)},
+		},
+	} {
+		ros := types.NewMockRosProvider()
+		db := types.NewMockDBProvider()
+		storeSchedule(t, db, schedule{
+			ID:         "startup-emergency",
+			Time:       "09:30",
+			DaysOfWeek: []int{int(startup.Weekday())},
+			Enabled:    true,
+		})
+
+		s := &SchedulerProvider{
+			rosProvider:   ros,
+			dbProvider:    db,
+			statusUpdates: make(chan struct{}, 1),
+		}
+		s.subscribeToStatus()
+		s.checkSchedulesAt(startup)
+
+		for i, update := range updates {
+			ros.Dispatch(update.topic, update.msg)
+			processStartupUpdate(t, s, startup, startup.Add(time.Duration(i+1)*time.Second))
+			assert.Empty(t, ros.ServiceCalls, "an emergency HLS must never transiently start the due schedule")
+		}
+	}
+}
+
+func TestStartupWindow_HardwareEmergencyCannotBeClearedByHLS(t *testing.T) {
+	startup := time.Date(2024, 1, 15, 9, 30, 10, 0, time.Local) // Monday
+
+	for _, tc := range []struct {
+		name    string
+		updates []struct {
+			topic string
+			msg   []byte
+		}
+	}{
+		{
+			name: "hardware emergency before HLS snapshot",
+			updates: []struct {
+				topic string
+				msg   []byte
+			}{
+				{topic: "emergency", msg: []byte(`{"active_emergency":true}`)},
+				{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"IDLE","emergency":false}`)},
+				{topic: "coverageSession", msg: []byte(`{"session_active":false}`)},
+				{topic: "coverageResumeAvailable", msg: []byte(`{"data":false}`)},
+			},
+		},
+		{
+			name: "hardware emergency after HLS snapshot",
+			updates: []struct {
+				topic string
+				msg   []byte
+			}{
+				{topic: "highLevelStatus", msg: []byte(`{"state":1,"state_name":"IDLE","emergency":false}`)},
+				{topic: "emergency", msg: []byte(`{"active_emergency":true}`)},
+				{topic: "coverageSession", msg: []byte(`{"session_active":false}`)},
+				{topic: "coverageResumeAvailable", msg: []byte(`{"data":false}`)},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ros := types.NewMockRosProvider()
+			db := types.NewMockDBProvider()
+			storeSchedule(t, db, schedule{
+				ID:         "startup-hardware-emergency",
+				Time:       "09:30",
+				DaysOfWeek: []int{int(startup.Weekday())},
+				Enabled:    true,
+			})
+
+			s := &SchedulerProvider{
+				rosProvider:   ros,
+				dbProvider:    db,
+				statusUpdates: make(chan struct{}, 1),
+			}
+			s.subscribeToStatus()
+			s.checkSchedulesAt(startup)
+
+			for i, update := range tc.updates {
+				ros.Dispatch(update.topic, update.msg)
+				processStartupUpdate(t, s, startup, startup.Add(time.Duration(i+1)*time.Second))
+				assert.Empty(t, ros.ServiceCalls, "an active hardware emergency must not be cleared by HLS")
+			}
 		})
 	}
 }
@@ -719,13 +824,15 @@ func TestSubscribeToStatus_UpdatesHighLevelState(t *testing.T) {
 	}
 	s.subscribeToStatus()
 
-	// Dispatch a highLevelStatus message with state = 2 (AUTONOMOUS)
-	msg, err := json.Marshal(mowgli.HighLevelStatus{State: 2})
+	// highLevelStatus supplies both operational mode and the emergency value
+	// used by startup admission.
+	msg, err := json.Marshal(mowgli.HighLevelStatus{State: 2, Emergency: true})
 	require.NoError(t, err)
 	ros.Dispatch("highLevelStatus", msg)
 
 	// Allow the synchronous mock callback to run
 	assert.Equal(t, uint8(2), s.lastHighLevelState)
+	assert.True(t, s.highLevelEmergency)
 	assert.True(t, s.hasHighLevelStatus)
 	select {
 	case <-s.statusUpdates:
