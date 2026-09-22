@@ -41,7 +41,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <thread>
 #include <vector>
 
@@ -473,6 +472,60 @@ TEST_F(FollowStripDigTest, UnitLyingEntirelyInsideADigZoneIsBookedWithoutAnyGoal
 TEST_F(FollowStripDigTest, NearEndAbortPreservesResumeWithoutCompleting)
 {
   startFollowStrip({straightUnit(0.0, 10.0)});
+  ASSERT_EQ(tickUntil(
+                [&]()
+                {
+                  return follow->goalCount() == 1;
+                },
+                10.0),
+            BT::NodeStatus::RUNNING);
+
+  // 9.5 m is 190/200 path intervals (95%). The non-obstacle abort skip reaches
+  // the final pose but must still leave the unit and area uncompleted.
+  setRobot(9.5, 0.0);
+  ASSERT_EQ(tree->tickOnce(), BT::NodeStatus::RUNNING);
+  follow->abort(0);
+
+  EXPECT_EQ(tickUntil(
+                []()
+                {
+                  return false;
+                },
+                5.0),
+            BT::NodeStatus::FAILURE);
+  EXPECT_EQ(ctx->area_resume_pose_index.at(0), 200u);
+  EXPECT_LT(ctx->coverage_percent, 100.0f);
+  EXPECT_TRUE(ctx->area_completed_swaths[0].empty());
+  EXPECT_TRUE(ctx->completed_areas.empty());
+}
+
+// The contrasting terminal result remains the only ordinary completion path:
+// it clears an old resume cursor, records the unit, and retires a one-unit area.
+TEST_F(FollowStripDigTest, SuccessClearsResumeAndCompletesArea)
+{
+  startFollowStrip({straightUnit(0.0, 10.0)});
+  ASSERT_EQ(tickUntil(
+                [&]()
+                {
+                  return follow->goalCount() == 1;
+                },
+                10.0),
+            BT::NodeStatus::RUNNING);
+
+  ctx->area_resume_pose_index[0] = 42;
+  follow->succeed(0);
+
+  EXPECT_EQ(tickUntil(
+                []()
+                {
+                  return false;
+                },
+                5.0),
+            BT::NodeStatus::SUCCESS);
+  EXPECT_EQ(ctx->area_resume_pose_index.count(0), 0u);
+  EXPECT_EQ(ctx->area_completed_swaths[0], (std::set<std::size_t>{0}));
+  EXPECT_EQ(ctx->completed_areas.count(0), 1u);
+}
 
 // --- Coverage controller rejoin (FTC turn fallback) --------------------------
 //
@@ -546,53 +599,6 @@ TEST_F(FollowStripDigTest, ControllerRejoinMovesTheProgressCursorPastTheSkippedT
                 },
                 10.0),
             BT::NodeStatus::RUNNING);
-
-  // 9.5 m is 190/200 path intervals (95%). The non-obstacle abort skip reaches
-  // the final pose but must still leave the unit and area uncompleted.
-  setRobot(9.5, 0.0);
-  ASSERT_EQ(tree->tickOnce(), BT::NodeStatus::RUNNING);
-  follow->abort(0);
-
-  EXPECT_EQ(tickUntil(
-                []()
-                {
-                  return false;
-                },
-                5.0),
-            BT::NodeStatus::FAILURE);
-  EXPECT_EQ(ctx->area_resume_pose_index.at(0), 200u);
-  EXPECT_LT(ctx->coverage_percent, 100.0f);
-  EXPECT_TRUE(ctx->area_completed_swaths[0].empty());
-  EXPECT_TRUE(ctx->completed_areas.empty());
-}
-
-// The contrasting terminal result remains the only ordinary completion path:
-// it clears an old resume cursor, records the unit, and retires a one-unit area.
-TEST_F(FollowStripDigTest, SuccessClearsResumeAndCompletesArea)
-{
-  startFollowStrip({straightUnit(0.0, 10.0)});
-  ASSERT_EQ(tickUntil(
-                [&]()
-                {
-                  return follow->goalCount() == 1;
-                },
-                10.0),
-            BT::NodeStatus::RUNNING);
-
-  ctx->area_resume_pose_index[0] = 42;
-  follow->succeed(0);
-
-  EXPECT_EQ(tickUntil(
-                []()
-                {
-                  return false;
-                },
-                5.0),
-            BT::NodeStatus::SUCCESS);
-  EXPECT_EQ(ctx->area_resume_pose_index.count(0), 0u);
-  EXPECT_EQ(ctx->area_completed_swaths[0], (std::set<std::size_t>{0}));
-  EXPECT_EQ(ctx->completed_areas.count(0), 1u);
-
   for (double x = 0.25; x <= 4.5 + 1e-9; x += 0.25)
   {
     setRobot(x, 0.0);
