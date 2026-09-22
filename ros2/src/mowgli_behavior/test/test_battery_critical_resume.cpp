@@ -58,7 +58,10 @@ using mowgli_behavior::EndSession;
 using mowgli_behavior::IsBatteryAbove;
 using mowgli_behavior::IsCommand;
 using mowgli_behavior::IsCriticalChargeStopHeld;
+using mowgli_behavior::IsCriticalDockFailureLatched;
+using mowgli_behavior::IsLastDockSucceeded;
 using mowgli_behavior::IsResumeUndockAllowed;
+using mowgli_behavior::LatchCriticalDockFailure;
 
 // ---------------------------------------------------------------------------
 // Global ROS2 init/shutdown
@@ -131,6 +134,8 @@ protected:
   BT::BehaviorTreeFactory factory;
 
   bool charging_ok = true;  // stand-in for IsChargingProgressing
+  bool battery_critical = true;
+  bool docking_ok = true;  // stand-in for DockRobot's terminal result
   int dock_count = 0;  // stand-in for DockRobot
   int undock_count = 0;  // stand-in for BackUp (undock/resume tail)
   int stop_hold_count = 0;
@@ -149,6 +154,9 @@ protected:
     factory.registerNodeType<IsBatteryAbove>("IsBatteryAbove");
     factory.registerNodeType<IsCommand>("IsCommand");
     factory.registerNodeType<IsCriticalChargeStopHeld>("IsCriticalChargeStopHeld");
+    factory.registerNodeType<IsCriticalDockFailureLatched>("IsCriticalDockFailureLatched");
+    factory.registerNodeType<IsLastDockSucceeded>("IsLastDockSucceeded");
+    factory.registerNodeType<LatchCriticalDockFailure>("LatchCriticalDockFailure");
     factory.registerNodeType<IsResumeUndockAllowed>("IsResumeUndockAllowed");
     factory.registerNodeType<EndSession>("EndSession");
     factory.registerNodeType<ClearCommand>("ClearCommand");
@@ -160,9 +168,10 @@ protected:
                                                          : BT::NodeStatus::FAILURE;
                                     });
     factory.registerSimpleCondition("BatteryLow",
-                                    [](BT::TreeNode&)
+                                    [this](BT::TreeNode&)
                                     {
-                                      return BT::NodeStatus::SUCCESS;
+                                      return battery_critical ? BT::NodeStatus::SUCCESS
+                                                              : BT::NodeStatus::FAILURE;
                                     });
     factory.registerSimpleAction("UndockMarker",
                                  [this](BT::TreeNode&)
@@ -174,7 +183,9 @@ protected:
                                  [this](BT::TreeNode&)
                                  {
                                    ++dock_count;
-                                   return BT::NodeStatus::SUCCESS;
+                                   ctx->last_dock_succeeded = docking_ok;
+                                   return docking_ok ? BT::NodeStatus::SUCCESS
+                                                     : BT::NodeStatus::FAILURE;
                                  });
     factory.registerSimpleAction("StopHoldMarker",
                                  [this](BT::TreeNode&)
@@ -199,32 +210,56 @@ protected:
         <BehaviorTree ID="MainTree">
           <Fallback name="MainLogic">
           <Sequence name="CriticalBatteryDock">
-            <BatteryLow/>
+            <Fallback>
+              <IsCriticalDockFailureLatched/>
+              <BatteryLow/>
+            </Fallback>
             <Inverter><IsCriticalChargeStopHeld/></Inverter>
-            <DockMarker/>
-            <ReactiveSequence name="CriticalChargeHold">
-              <Inverter name="CriticalChargeHoldNotStopped">
-                <IsCriticalChargeStopHeld latch_current_stop="true"/>
-              </Inverter>
-              <Fallback name="CriticalChargeOrAbort">
-              <RetryUntilSuccessful num_attempts="960">
-                <Sequence>
-                  <ChargingProgress/>
-                  <Fallback>
-                    <IsBatteryAbove threshold="{battery_full_pct}"/>
-                    <WaitForCharge/>
-                  </Fallback>
-                </Sequence>
-              </RetryUntilSuccessful>
-              <Sequence name="CriticalChargerFailed">
-                <EndSession/>
-                <ClearCommand/>
-                <AlwaysFailure/>
+            <Fallback name="CriticalDockRetryGate">
+              <Sequence>
+                <Inverter><IsCriticalDockFailureLatched/></Inverter>
+                <Fallback>
+                  <DockMarker/>
+                  <Sequence>
+                    <LatchCriticalDockFailure/>
+                    <AlwaysSuccess/>
+                  </Sequence>
+                </Fallback>
+                <IfThenElse name="DockSucceededOrStayStopped">
+                  <IsLastDockSucceeded/>
+                  <Sequence>
+                    <ReactiveSequence name="CriticalChargeHold">
+                      <Inverter name="CriticalChargeHoldNotStopped">
+                        <IsCriticalChargeStopHeld latch_current_stop="true"/>
+                      </Inverter>
+                      <Fallback name="CriticalChargeOrAbort">
+                      <RetryUntilSuccessful num_attempts="960">
+                        <Sequence>
+                          <ChargingProgress/>
+                          <Fallback>
+                            <IsBatteryAbove threshold="{battery_full_pct}"/>
+                            <WaitForCharge/>
+                          </Fallback>
+                        </Sequence>
+                      </RetryUntilSuccessful>
+                      <Sequence name="CriticalChargerFailed">
+                        <EndSession/>
+                        <ClearCommand/>
+                        <AlwaysFailure/>
+                      </Sequence>
+                      </Fallback>
+                    </ReactiveSequence>
+                    <IsResumeUndockAllowed max_attempts="3"/>
+                    <UndockMarker/>
+                  </Sequence>
+                  <AlwaysSuccess/>
+                </IfThenElse>
               </Sequence>
-              </Fallback>
-            </ReactiveSequence>
-            <IsResumeUndockAllowed max_attempts="3"/>
-            <UndockMarker/>
+              <Sequence>
+                <IsCriticalDockFailureLatched/>
+                <AlwaysSuccess/>
+              </Sequence>
+            </Fallback>
           </Sequence>
           <StopHoldMarker/>
           </Fallback>
@@ -326,6 +361,36 @@ TEST_F(CriticalBatteryResumeTest, StopBeforeCriticalDockDoesNotCancelSafetyDocki
   EXPECT_TRUE(ctx->critical_charge_stop_latched);
   EXPECT_EQ(undock_count, 0);
   EXPECT_EQ(stop_hold_count, 1);
+}
+
+TEST_F(CriticalBatteryResumeTest, FailedCriticalDockDoesNotEnterChargeHoldOrLatchStop)
+{
+  ctx->current_command = 8;
+  ctx->battery_percent = 5.0f;
+  docking_ok = false;
+
+  auto tree = makeTree();
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::SUCCESS);
+  EXPECT_EQ(dock_count, 1);
+  EXPECT_FALSE(ctx->last_dock_succeeded);
+  EXPECT_TRUE(ctx->critical_dock_failure_latched);
+  EXPECT_FALSE(ctx->critical_charge_stop_latched);
+  EXPECT_EQ(stop_hold_count, 0);
+
+  // The failure remains stopped without issuing another goal at timer rate.
+  battery_critical = false;
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::SUCCESS);
+  EXPECT_EQ(dock_count, 1);
+  EXPECT_TRUE(ctx->critical_dock_failure_latched);
+
+  // An explicit operator retry clears the failure latch; docking can proceed.
+  ctx->critical_dock_failure_latched = false;
+  ctx->current_command = 1;
+  battery_critical = true;
+  docking_ok = true;
+  EXPECT_EQ(tree.tickOnce(), BT::NodeStatus::RUNNING);
+  EXPECT_EQ(dock_count, 2);
+  EXPECT_FALSE(ctx->critical_charge_stop_latched);
 }
 
 TEST(CriticalBatteryResumeStructureTest, StopGatesArePostDockReactiveHoldsBeforeBothWaits)

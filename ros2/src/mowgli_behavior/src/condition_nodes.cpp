@@ -281,14 +281,38 @@ BT::NodeStatus IsCriticalChargeStopHeld::tick()
   if (latch_current_stop && ctx->current_command == 8 && !ctx->critical_charge_stop_latched)
   {
     ctx->critical_charge_stop_latched = true;
-    if (!ctx->coverage_resume_path.empty() && !saveCoverageResumeState(*ctx) && ctx->node)
-    {
-      RCLCPP_ERROR(ctx->node->get_logger(),
-                   "Critical charge STOP is active but its hold could not be persisted to '%s'",
-                   ctx->coverage_resume_path.c_str());
-    }
   }
   return ctx->critical_charge_stop_latched ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+}
+
+BT::NodeStatus IsLastDockSucceeded::tick()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  return ctx->last_dock_succeeded ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+}
+
+BT::NodeStatus IsCriticalDockFailureLatched::tick()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
+  return ctx->critical_dock_failure_latched ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+}
+
+BT::NodeStatus LatchCriticalDockFailure::tick()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  {
+    std::lock_guard<std::mutex> lock(ctx->context_mutex);
+    ctx->critical_dock_failure_latched = true;
+  }
+  if (!ctx->coverage_resume_path.empty() && !saveCoverageResumeState(*ctx) && ctx->node)
+  {
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "Critical docking failure is latched in memory but could not be persisted to "
+                 "'%s'; inspect storage before restarting",
+                 ctx->coverage_resume_path.c_str());
+  }
+  return BT::NodeStatus::SUCCESS;
 }
 
 // ---------------------------------------------------------------------------

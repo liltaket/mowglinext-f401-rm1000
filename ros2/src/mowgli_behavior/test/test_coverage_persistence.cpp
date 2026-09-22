@@ -103,6 +103,22 @@ TEST(CoveragePersistence, StoppedChargeHoldPersistsStopWithoutDroppingResumeCurs
   std::remove(cancelled.coverage_resume_path.c_str());
 }
 
+TEST(CoveragePersistence, CriticalDockFailureRemainsLatchedAfterRestart)
+{
+  BTContext failed;
+  failed.coverage_resume_path = ::testing::TempDir() + "/critical_dock_failure.txt";
+  failed.current_command = 1;
+  failed.critical_dock_failure_latched = true;
+  ASSERT_TRUE(saveCoverageResumeState(failed));
+
+  BTContext restarted;
+  restarted.coverage_resume_path = failed.coverage_resume_path;
+  ASSERT_TRUE(loadCoverageResumeState(restarted));
+  EXPECT_TRUE(restarted.critical_dock_failure_latched);
+  EXPECT_EQ(restarted.current_command, 1);
+  std::remove(failed.coverage_resume_path.c_str());
+}
+
 TEST(CoveragePersistence, FailedPlanningCountsSessionsAndSurvivesRestart)
 {
   BTContext ctx;

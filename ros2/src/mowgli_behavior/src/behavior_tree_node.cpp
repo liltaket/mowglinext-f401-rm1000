@@ -728,6 +728,7 @@ private:
             RCLCPP_INFO(get_logger(),
                         "HighLevelControl: COMMAND_S2 normalised to COMMAND_START (mow next area)");
           }
+          bool cleared_dock_failure_latch = false;
           {
             std::lock_guard<std::mutex> lock(context_->context_mutex);
             // Play pressed while parked in a charge hold (CHARGING /
@@ -757,6 +758,8 @@ private:
             if (cmd != HighLevelControl::Request::COMMAND_STOP)
             {
               context_->critical_charge_stop_latched = false;
+              cleared_dock_failure_latch = context_->critical_dock_failure_latched;
+              context_->critical_dock_failure_latched = false;
             }
             else if (context_->last_high_level_status.state_name == "CRITICAL_BATTERY_CHARGING")
             {
@@ -779,18 +782,14 @@ private:
               clearSingleAreaMode(*context_);
             }
           }
-          // The BT tick and this service use the same default mutually
-          // exclusive callback group, so no tree node can read or mutate the
-          // coverage maps during this snapshot. Persist STOP synchronously
-          // before acknowledging it: otherwise a restart can restore an older
-          // COMMAND_START and auto-resume the cancelled session.
-          if (cmd == HighLevelControl::Request::COMMAND_STOP &&
-              !context_->coverage_resume_path.empty() && !saveCoverageResumeState(*context_))
+          // Let the BT issue stop/retry actions before doing disk I/O. The tick
+          // thread serializes this snapshot with all coverage-map access. The
+          // service response acknowledges the in-memory command immediately;
+          // a durability failure is reported to the node log.
+          if ((cmd == HighLevelControl::Request::COMMAND_STOP || cleared_dock_failure_latch) &&
+              !context_->coverage_resume_path.empty())
           {
-            RCLCPP_ERROR(get_logger(),
-                         "HighLevelControl: STOP is active in memory but could not persist the "
-                         "cancelled command to '%s'; inspect storage before restarting",
-                         context_->coverage_resume_path.c_str());
+            command_resume_persistence_requested_.store(true);
           }
           resp->success = true;
         },
@@ -817,12 +816,19 @@ private:
             resp->success = false;
             return;
           }
+          bool cleared_dock_failure_latch = false;
           {
             std::lock_guard<std::mutex> lock(context_->context_mutex);
             context_->target_area_index = static_cast<int>(req->area);
             context_->blade_direction.clearOperatorInhibit();
             context_->current_command = 1;  // COMMAND_START
             context_->critical_charge_stop_latched = false;
+            cleared_dock_failure_latch = context_->critical_dock_failure_latched;
+            context_->critical_dock_failure_latched = false;
+          }
+          if (cleared_dock_failure_latch && !context_->coverage_resume_path.empty())
+          {
+            command_resume_persistence_requested_.store(true);
           }
           resp->success = true;
         },
@@ -1439,6 +1445,14 @@ private:
     {
       RCLCPP_ERROR(get_logger(), "Exception during tree tick: %s", ex.what());
     }
+    if (command_resume_persistence_requested_.exchange(false) &&
+        !saveCoverageResumeState(*context_))
+    {
+      RCLCPP_ERROR(get_logger(),
+                   "HighLevelControl: command is active in memory but could not persist its "
+                   "resume state to '%s'; inspect storage before restarting",
+                   context_->coverage_resume_path.c_str());
+    }
   }
 
   // ------------------------------------------------------------------
@@ -1501,6 +1515,8 @@ private:
   // Set by the ~/clear_coverage_resume service, consumed by tickTree() so the
   // actual map clearing happens on the BT tick thread (see the service comment).
   std::atomic<bool> clear_resume_requested_{false};
+  /// Command storage is deferred until the BT tick has issued its actions.
+  std::atomic<bool> command_resume_persistence_requested_{false};
   // ~/set_fleet_assignment payload, handed to the tick thread through
   // fleet_assignment_requested_ (same deferral as clear_resume_requested_).
   struct FleetAssignment
