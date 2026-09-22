@@ -1,5 +1,7 @@
 // Copyright 2026 Mowgli Project
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <cmath>
+#include <cstddef>
 #include <type_traits>
 
 #include "mowgli_nav2_plugins/ftc_controller.hpp"
@@ -58,6 +60,12 @@ protected:
     checker_.onPath(path);
   }
 
+  // Friendship is the fixture's, not a TEST_F body's.
+  double xyGoalTolerance() const
+  {
+    return checker_.xy_goal_tolerance_;
+  }
+
   std::shared_ptr<nav2::LifecycleNode> node_;
   PathProgressGoalChecker checker_;
   geometry_msgs::msg::Pose goal_;
@@ -102,13 +110,21 @@ TEST_F(PathProgressGoalCheckerTest, NearEndReplayNeedsProgressBeforeProximityCom
   }
 
   // On a fresh replay, actual forward motion is still required before normal
-  // progress-gated completion can occur.
+  // progress-gated completion can occur — right up to the deliberate
+  // end-approach rule, which completes the goal once the path still ahead of
+  // the monotonic cursor is shorter than xy_goal_tolerance (FTC parks that far
+  // short of the last pose; see path_progress_goal_checker.hpp). Only the span
+  // before that final band can be asserted incomplete.
   checker_.reset();
   setPath(replay);
-  for (std::size_t i = 0; i + 1 < replay->poses.size(); ++i)
+  constexpr double kReplayStepM = 0.1;
+  const auto end_approach_poses =
+      static_cast<std::size_t>(std::ceil(xyGoalTolerance() / kReplayStepM)) + 1;
+  ASSERT_LT(end_approach_poses, replay->poses.size());
+  for (std::size_t i = 0; i + end_approach_poses < replay->poses.size(); ++i)
   {
     auto replay_pose = replay_goal;
-    replay_pose.position.x = 0.1 * static_cast<double>(i);
+    replay_pose.position.x = kReplayStepM * static_cast<double>(i);
     EXPECT_FALSE(checker_.isGoalReached(replay_pose, replay_goal, {}, {})) << "pose " << i;
   }
   EXPECT_TRUE(checker_.isGoalReached(replay_goal, replay_goal, {}, {}));

@@ -482,8 +482,13 @@ TEST_F(FollowStripDigTest, NearEndAbortPreservesResumeWithoutCompleting)
 
   // 9.5 m is 190/200 path intervals (95%). The non-obstacle abort skip reaches
   // the final pose but must still leave the unit and area uncompleted.
-  setRobot(9.5, 0.0);
-  ASSERT_EQ(tree->tickOnce(), BT::NodeStatus::RUNNING);
+  // The progress cursor only creeps a bounded stretch of path per tick
+  // (strip_progress.hpp), so drive there rather than teleport.
+  for (double x = 0.25; x <= 9.5 + 1e-9; x += 0.25)
+  {
+    setRobot(x, 0.0);
+    ASSERT_EQ(tree->tickOnce(), BT::NodeStatus::RUNNING);
+  }
   follow->abort(0);
 
   EXPECT_EQ(tickUntil(
