@@ -707,6 +707,20 @@ def generate_launch_description() -> LaunchDescription:
                 "home_assistant_discovery_enabled": bool(
                     robot_params.get("mqtt_home_assistant_discovery_enabled", False)
                 ),
+                # Labels <prefix>/area_boundary's map-frame metres with the WGS84
+                # origin they are relative to. Without this the node keeps its
+                # 0.0/0.0 default and every consumer that projects a real GPS
+                # fix through the published datum puts the mower ~6000 km away.
+                "datum_lat": datum_lat,
+                "datum_lon": datum_lon,
+            },
+            # Charging dock pose (map frame), shown on <prefix>/area_boundary. Same
+            # robot_params source as hardware_bridge / map_server; read at startup,
+            # like they do (a dock re-calibration takes effect after a restart).
+            {
+                "dock_pose_x": float(robot_params.get("dock_pose_x", 0.0)),
+                "dock_pose_y": float(robot_params.get("dock_pose_y", 0.0)),
+                "dock_pose_yaw": float(robot_params.get("dock_pose_yaw", 0.0)),
             },
         ],
     )
@@ -763,6 +777,24 @@ def generate_launch_description() -> LaunchDescription:
         executable="cmd_vel_ws_relay.py",
         name="cmd_vel_ws_relay",
         output="screen",
+    )
+
+    # ------------------------------------------------------------------
+    # 12b. Fleet peer obstacles — other mowers as local-costmap points
+    # ------------------------------------------------------------------
+    # The GUI fleet coordinator publishes the other fleet members' poses on
+    # /fleet/peers (PoseArray, map frame) through foxglove clientPublish;
+    # this node turns them into a continuously published PointCloud2 on
+    # /fleet/peer_obstacles that the local costmap marks (see the
+    # fleet_peers source / fleet_layer in the Nav2 overlays). Always launched:
+    # it publishes an EMPTY cloud when the robot is alone, so the costmap
+    # source never goes stale. docs/MULTI_ROBOT.md.
+    fleet_peer_obstacles_node = Node(
+        package="mowgli_bringup",
+        executable="fleet_peer_obstacles.py",
+        name="fleet_peer_obstacles",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
     )
 
     # ------------------------------------------------------------------
@@ -912,6 +944,7 @@ def generate_launch_description() -> LaunchDescription:
             foxglove_bridge_node,
             led_ring_node,
             cmd_vel_relay_node,
+            fleet_peer_obstacles_node,
             # Dock heading is published by hardware_bridge at 1 Hz while
             # charging (~/dock_heading → /gnss/heading via mowgli.launch.py
             # remapping). No separate launch action needed.

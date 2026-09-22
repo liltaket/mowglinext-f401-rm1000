@@ -66,6 +66,7 @@ It is the radius around a session dig point inside which FollowStrip skips cover
 | Key (L) | Default | Consumer · where read | GUI | Life |
 |---|---|---|---|---|
 | `mower_model` (L18) | `YardForce500` | no ROS consumer; `ros2/scripts/compute_nav2_params.py:293` picks the motor-spec row; installer hardware presets | Hardware | sidecar |
+| `robot_name` (L23) | `mowgli` | no ROS consumer; GUI backend `gui/pkg/providers/fleet_identity.go` reads it for `/api/fleet/identity`, the HomeKit accessory name and the fleet view (`docs/MULTI_ROBOT.md`) | Hardware (+ onboarding step 1) | sidecar |
 | `chassis_length` (L24) | 0.60 | xacro `mowgli.launch.py:94`; Nav2 footprint `navigation.launch.py:304` | Hardware | launch |
 | `chassis_width` (L25) | 0.45 | xacro `mowgli.launch.py:95`; footprint `navigation.launch.py:305`; `map_server.chassis_width` `full_system.launch.py:389`; `coverage_server.robot_width` `navigation.launch.py:930` | Hardware | launch |
 | `chassis_height` (L26) | 0.19 | xacro `mowgli.launch.py:96` | Hardware | launch |
@@ -204,7 +205,7 @@ All feed the xacro in `mowgli.launch.py:108–120`; `lidar_z`/`lidar_yaw`/`imu_y
 
 | Key (L) | Default | Consumer · where read | GUI | Life |
 |---|---|---|---|---|
-| `datum_lat` (L272) / `datum_lon` (L273) | 0.0 / 0.0 (= unset) | `navsat_to_absolute_pose` + `map_server` `full_system.launch.py:363–364,433–434`; `cog_to_imu` `navigation.launch.py:548–549` → `:1121–1122`; `fusion_graph` reads the yaml itself, `fusion_graph.launch.py:130–131` → `:144–145` | GPS / Positioning | launch (a change re-projects `areas.dat` + dock pose at load, issue #216) |
+| `datum_lat` (L272) / `datum_lon` (L273) | 0.0 / 0.0 (= unset) | `navsat_to_absolute_pose` + `map_server` + `mqtt_bridge_node` `full_system.launch.py:363–364,433–434` (bridge: the `mqtt_bridge_node` parameters block); `cog_to_imu` `navigation.launch.py:548–549` → `:1121–1122`; `fusion_graph` reads the yaml itself, `fusion_graph.launch.py:130–131` → `:144–145` | GPS / Positioning | launch (a change re-projects `areas.dat` + dock pose at load, issue #216) |
 | `dock_pose_x` (L421) / `dock_pose_y` (L422) / `dock_pose_yaw` (L431) | 0.0 | `hardware_bridge` `mowgli.launch.py:200–202`; `map_server` `full_system.launch.py:380–382`; `docking_server.home_dock.pose` (with `dock_approach_overshoot` applied) `navigation.launch.py:682–686`; `fusion_graph` `fusion_graph.launch.py:151–153` | no | launch |
 
 **Writers of `dock_pose_*` back into the installed yaml** (line-splice, comments preserved — `mowgli_interfaces/robot_yaml_scalar.hpp` `UpdateDockPose` L122): ONLY `map_server`'s `area_manager.cpp` — `on_set_docking_point` (`/set_docking_point`: GUI set-dock-pose, map-drag, and BOTH dock calibrations of `calibrate_imu_yaw_node`, which no longer splices the file itself) + the datum migration. `calibration_nodes.cpp` **no longer writes** either (`calibration_nodes.cpp:48`). ONE source file, two call sites. `map_server` also takes `dock_antenna_capture_ttl_s` (300 s, code default): how long a `~/capture_dock_antenna` result stays usable by a `use_pending_antenna` write.
@@ -289,7 +290,7 @@ All feed the xacro in `mowgli.launch.py:108–120`; `lidar_z`/`lidar_yaw`/`imu_y
 | Key (L) | Default | Becomes · clamp | GUI | Life |
 |---|---|---|---|---|
 | `max_obstacle_avoidance_distance` (L569) | 1.0 | `FTC.max_lateral_deviation` = clamp(0.5, 10.0) L811; `map_server.bypass_max_length` `full_system.launch.py:400` | Obstacles | launch |
-| `obstacle_inflation_radius` (L598) | 0.58 | **local** costmap `inflation_layer.inflation_radius` = min(1.50, max(floor, setting)) L960 (global stays 0.20); by default `floor` is the live chassis circumscribed radius (≈0.597 m for the shipped 0.45 × 0.60 chassis), or `local_inflation_inscribed_radius` when that override is enabled | Obstacles | launch |
+| `obstacle_inflation_radius` (L598) | 0.58 | **local** costmap `inflation_layer.inflation_radius` = min(1.50, max(floor, setting)) L960 (the global radius is derived separately — `robot_config_util.global_inflation_radius`, circumscribed + one cell, 0.677 m shipped, `cost_scaling_factor` 7.0); by default `floor` is the live chassis circumscribed radius (≈0.597 m for the shipped 0.45 × 0.60 chassis), or `local_inflation_inscribed_radius` when that override is enabled | Obstacles | launch |
 | `obstacle_detection_range_m` (L611) | 2.0 | `FTC.obstacle_lookahead` = max(4, clamp(0.2, 5.0)/0.05 poses) L823 | Obstacles | launch |
 | `obstacle_clearance_margin` (L627) | 0.2 | `FTC.obstacle_clearance_margin` = clamp(0.0, 0.50) L831 | Obstacles | launch |
 | `obstacle_wait_timeout_s` (L632) | 2.5 | `FTC.obstacle_wait_timeout_s` = clamp(0.5, 60.0) L838 | Obstacles | launch |
@@ -356,7 +357,7 @@ These fall back to a literal hardcoded in the launch file. Each is allow-listed 
 
 **Bucket A — install-time choices.** The installer or onboarding wizard picks them; there is no sensible versioned default a maintainer could bump for everyone.
 
-- `mower_model`, `lidar_enabled` (L28–29). `lidar_enabled` is the special case: it is **deliberately absent from the template**, so its *presence* is what proves an explicit operator choice was made. Absent ⇒ `DEFAULT_LIDAR_ENABLED = False` plus a multi-line startup warning naming the file and key (`robot_config_util.py:144–214`). The value must equal the GUI schema default (`false`), or the backend's sparse-prune would delete every "turn LiDAR on" write and the toggle would be inert in the ON direction forever.
+- `mower_model`, `robot_name`, `lidar_enabled` (L28–30). `lidar_enabled` is the special case: it is **deliberately absent from the template**, so its *presence* is what proves an explicit operator choice was made. Absent ⇒ `DEFAULT_LIDAR_ENABLED = False` plus a multi-line startup warning naming the file and key (`robot_config_util.py:144–214`). The value must equal the GUI schema default (`false`), or the backend's sparse-prune would delete every "turn LiDAR on" write and the toggle would be inert in the ON direction forever.
 - GNSS transport: `gnss_receiver_family`, `gnss_serial_device`, `gnss_serial_baud` (L32–34) and receiver-profile auto-apply `gnss_config_apply_enabled`, `gnss_config_profile`, `gnss_signal_profile` (L43–45, consumed by `sensors/gps/start_gps.sh:304,320`).
 - Datum `datum_lat` / `datum_lon` (L49–50) — 0/0 means "not set" and disables datum migration entirely.
 - NTRIP `ntrip_enabled`, `ntrip_host`, `ntrip_port`, `ntrip_user`, `ntrip_password`, `ntrip_mountpoint` (L54–59) — **credentials; never commit real values.**
@@ -458,10 +459,10 @@ parameters remain directly under `FollowPath`.
 | `stopped_goal_checker` | 131–149 | transit goal gate |
 | `coverage_goal_checker` | 170–189 | `mowgli_nav2_plugins/PathProgressGoalChecker` L171, `plan_topic: /controller_server/FollowCoveragePath/global_plan` L189 — **never `StoppedGoalChecker`** |
 | `FollowPath` (transit) | 226–320 | RotationShim L227 wrapping RPP L228; `primary_controller.max_linear_vel: 0.30` L276 (overwritten by `transit_speed`) |
-| `FollowCoveragePath` (coverage) | 338–550 | `mowgli_nav2_plugins/FTCController` L339; `speed_fast` L346 / `speed_slow` L357 / `min_speed_mps` L364 (speed fast/slow launch-overwritten); obstacle restart angular acceleration `1.0 rad/s²` L363; `max_cmd_vel_ang: 0.8` L408; `max_goal_distance_error: 0.50` L414; `forward_only: true` L424; `check_obstacles` L429, `obstacle_lookahead` L435, `obstacle_body_half_width` L481, `enable_obstacle_deviation` L513, `max_lateral_deviation` L519, reverse-escape trio L548–550 |
+| `FollowCoveragePath` (coverage) | 338–550 | `mowgli_nav2_plugins/FTCController` L339; `speed_fast` L346 / `speed_slow` L357 / `min_speed_mps` L364 (speed fast/slow launch-overwritten); obstacle restart angular acceleration `1.0 rad/s²` L363; `max_cmd_vel_ang: 0.8` L408; `max_goal_distance_error: 0.50` L414; `forward_only: true` L424; `check_obstacles` L429, `obstacle_lookahead` L435, `obstacle_body_half_width` L481, `enable_obstacle_deviation` L513, `max_lateral_deviation` L519, reverse-escape trio L548–550; turn fallback (`ftc_turn_fallback.hpp`) `turn_fallback_enabled: true`, `turn_fallback_max_reverse_m: 0.40`, `turn_fallback_max_rejoin_arc_m: 3.0`, `turn_fallback_min_turn_deg: 45.0`, `turn_fallback_timeout_s: 45.0` — static (not operator-facing, no template key, no launch injection), dynamic via `set_parameters`, pinned by `test_ftc_turn_fallback_is_configured_and_bounded` |
 | `planner_server` | 551–590 | Smac |
 | `smoother_server` / `behavior_server` / `waypoint_follower` | 591 / 604 / 655 | BackUp lives in `behavior_server` (undock, Invariant 10) |
-| `global_costmap` | 674–789 | 70×70 m rolling L741–742, `resolution: 0.08` L715, `inflation_radius: 0.20` L780, **`keepout_filter` enabled** L782–785 |
+| `global_costmap` | 674–789 | 70×70 m rolling L741–742, `resolution: 0.08` L715, `inflation_radius` overwritten at launch by `global_inflation_radius` (0.677 m shipped; the yaml carries 0.68 for reference), `cost_scaling_factor: 7.0`, **`keepout_filter` enabled** L782–785 |
 | `local_costmap` | 790–871 | `global_frame: odom`, 10 Hz; its `inflation_layer.inflation_radius` is the one `obstacle_inflation_radius` overwrites |
 | `map_server` / `map_saver` | 872 / 877 | — |
 | `docking_server` | 888–1090 | `controller.odom_topic: /wheel_odom` L907, `controller_frequency: 20.0` L912 |

@@ -65,6 +65,7 @@
 | `scan_pause.hpp` | 105 | Header-only blade pause across a SHORT LiDAR dropout (`ScanPauseStep`, `kScanPauseMaxAgeSec=1.0`, `kScanResumeFreshSec=0.5`): blade OFF, coverage goal kept, blade back after a continuous fresh window. Driven by `FollowStrip::stepScanPause`; the Root `IsScanStale` halt (`max_age_sec=20`) is the second stage. Field 2026-09-12 |
 | `transit_failure.hpp` | 178 | `TransitFailure` enum + `classifyTransitFailure(nav2 error_code)`; `isStartPoseBlocked` |
 | `detour_resume.hpp` | 233 | Header-only costmap footprint test + resume-pose search (`DetourCostmap`, `decideDetour`) |
+| `strip_progress.hpp` | ~130 | Header-only `advanceProgressCursor`: FollowStrip's monotonic progress cursor may advance at most `kMaxProgressAdvanceM` (1.0 m) of ARC LENGTH per update — a pose-count window (400 poses) jumped onto the neighbouring serpentine swath whenever the robot skirted more than half a spacing off its line (field 2026-09-22: units booked MOWED at ~80 %, ~20 m² never driven). Drives `path_progress_idx_` (resume cursor, 95 % completion, detour stuck index). Plus `findControllerRejoin`: when FTC's turn fallback rejoins the unit past a skipped turn it republishes the rest of the unit on `/controller_server/FollowCoveragePath/global_plan`; FollowStrip subscribes to that topic (`ControllerRejoin`, only messages stamped after the goal was sent) and jumps the cursor to the EXACT matching pose ahead (position + orientation within 1e-6, ≤ 12 m of arc) — the bounded search cannot follow such a jump (at a U-turn the cursor's own pose, abeam on the other swath, stays nearest for the rest of the unit). Tests: `test_strip_progress.cpp`, `test_follow_strip_dig.cpp::ControllerRejoinMovesTheProgressCursorPastTheSkippedTurn` |
 | `dig_skip.hpp` | ~245 | Header-only session dig skip zones (Invariant 16, the issue-#500 re-dig protection): `DigPoint`, `recordDigPoint`, `insideDigZone`, `nextDrivableRun` (drivable run outside every zone, by arc length), `DigSettleStep` (wait for the bridge's bounded reverse). Driven by `FollowStrip::stepDigRecovery` / `skipUnitFrontPastDigZones` |
 | `dock_alignment.hpp` | 129 | Header-only along/cross-track dock delta + `EvaluateDockYawDrift` (`kDockStagingRunwayM=1.5`, σ floor 0.035 rad) |
 | `coverage_persistence.hpp` | 59 | save/load/clear resume-state API |
@@ -81,7 +82,7 @@
 | `calibration_nodes.cpp` | 433 | Undock line-fit yaw → `/fusion_graph_node/set_pose`; forward-drive yaw seed |
 | `recording_nodes.cpp` | 515 | Area recording, DP simplification, save via `/map_server_node/add_area` |
 | `status_nodes.cpp` | 240 | Status publish, `EndSession` (session-scoped clears :159-215), `ClearCommand` |
-| `status_snapshot.cpp` | 58 | Tree-owned vs live field split for `HighLevelStatus` |
+| `status_snapshot.cpp` | ~70 | Tree-owned vs live field split for `HighLevelStatus`; the one exception is `sub_state_name`, live-overridden to `"TRANSIT"` from `BTContext::transiting` (set by `FollowStrip`, `coverage_nodes.cpp`) — consumed by `mowgli_leds`' `kTransit` ring pattern |
 | `utility_nodes.cpp` | 267 | Blade service, waits, `SaveObstacles`, `ResetEmergency` |
 | `coverage_persistence.cpp` | 219 | Text file `coverage_resume.txt` (atomic tmp+rename): `current_command`, `single_area_target`, `current_area`, `completed_areas`, per-`area` rows (pose_count, fingerprint, resume, completed swaths) |
 | `battery_filter.cpp` | 85 | Rate-independent low-pass on `v_battery` |
@@ -90,7 +91,7 @@
 | `test_obstacle_recovery.cpp` | 305 | 13 tests: `IsObstacleStuck` timing/cap/cooldown against latched collision state |
 | `test_docking_boundary_exempt.cpp` | 232 | 8 tests: `IsDocking` + BoundaryGuard blade-off dock-transit exemption |
 | `test_set_nav2_lifecycle.cpp` | 243 | 7 tests: `SetNav2Lifecycle` gating + fake `manage_nodes` transition |
-| `test_get_next_unmowed_area.cpp` | ~640 | 17 tests: nav-only areas skipped, START_OCCUPIED + guard-halted (`MarkGuardHalt`) passes exempt from the no-progress budget, targeted (`~/start_in_area`) runs stay clipped, `EndSession` boundary |
+| `test_get_next_unmowed_area.cpp` | ~1200 | 34 tests: nav-only areas skipped, START_OCCUPIED + guard-halted (`MarkGuardHalt`) passes exempt from the no-progress budget, targeted (`~/start_in_area`) runs stay clipped, `EndSession` boundary, fleet coordination (excluded areas skipped, preferred-start rotation + wrap, yielded pass exempt, `FollowStrip` yields mid-pass) |
 | `test_start_occupied_retry.cpp` | 348 | 13 tests: `classifyTransitFailure`, consume-once `IsCoverageStartBlocked`, structural check of `StartPoseBlockedRetry` in `main_tree.xml` |
 | `test_coverage_persistence.cpp` | 248 | 10 tests: round-trip, header/version, malformed rows, `current_command` restore |
 | `test_gnss_status_authority.cpp` | 56 | 2 tests: `mowgli_interfaces::gnss_status_utils` fix-type mapping the BT relies on |
@@ -104,7 +105,7 @@
 | `test_localization_health.cpp` | 419 | 16 tests: pivot σ inflation must NOT pause; plain-GPS fallback must; stale feed |
 | `test_battery_critical_resume.cpp` | 225 | 3 tests: critical-battery tail auto-continues, only dead charger ends session |
 | `test_guard_fallthrough.cpp` | ~360 | 6 tests: guard handlers return FAILURE + structural `<AlwaysFailure/>` check on every blocking guard in `main_tree.xml` + `<MarkGuardHalt/>` is the first handler child in `SensorSafetyGuard` / `LocalizationGuard` |
-| `test_high_level_status_snapshot.cpp` | 156 | 6 tests: republished status carries live battery/progress, tree-owned state untouched |
+| `test_high_level_status_snapshot.cpp` | 185 | 8 tests: republished status carries live battery/progress, tree-owned state untouched, `transiting` overrides `sub_state_name` to `"TRANSIT"` |
 | `test_battery_filter.cpp` | 243 | 13 tests: sag immunity, rate independence, invalid reading never → 0 % |
 | `test_dock_alignment.cpp` | 191 | 11 tests: along/cross decomposition, yaw-drift band |
 
@@ -143,7 +144,7 @@ Blackboard: `"context"` = `std::shared_ptr<BTContext>`; keys seeded at startup (
 | `/cmd_vel_nav` | `geometry_msgs/msg/TwistStamped` | pub | 10 | `EscapeStartBlocked` (`escape_nodes.cpp` :160) — lowest twist_mux lane, through collision_monitor |
 
 ### Services & actions
-Served (`behavior_tree_node.cpp`, with blade control in `blade_control_service.hpp`): `~/blade_control` (`mowgli_interfaces/srv/BladeControl`, map-menu policy acceptance/forwarding/message), `~/high_level_control` (`mowgli_interfaces/srv/HighLevelControl`), `~/start_in_area` (`mowgli_interfaces/srv/StartInArea`), `~/clear_coverage_resume` (`std_srvs/srv/Trigger`, applied at the top of `tickTree` :1004). GUI callers: `gui/pkg/api/mowglinext.go` :564/:594/:691, `gui/pkg/providers/scheduler.go` :166, `homekit.go` :44, `mqtt.go` :118.
+Served (`behavior_tree_node.cpp`, with blade control in `blade_control_service.hpp`): `~/blade_control` (`mowgli_interfaces/srv/BladeControl`, map-menu policy acceptance/forwarding/message), `~/high_level_control` (`mowgli_interfaces/srv/HighLevelControl`), `~/start_in_area` (`mowgli_interfaces/srv/StartInArea`), `~/clear_coverage_resume` (`std_srvs/srv/Trigger`, applied at the top of `tickTree` :1004), `~/set_fleet_assignment` (`mowgli_interfaces/srv/SetFleetAssignment`, deferred to the tick thread the same way; fills `BTContext::fleet_excluded_areas` / `fleet_preferred_start`, docs/MULTI_ROBOT.md). Also publishes `~/coverage_session` (`mowgli_interfaces/msg/CoverageSession`, 1 Hz) for the fleet coordinator. GUI callers: `gui/pkg/api/mowglinext.go` :564/:594/:691, `gui/pkg/providers/scheduler.go` :166, `homekit.go` :44, `mqtt.go` :118.. GUI callers: `gui/pkg/api/mowglinext.go` :564/:594/:691, `gui/pkg/providers/scheduler.go` :166, `homekit.go` :44, `mqtt.go` :118.
 
 Clients (node → file:line):
 | Target | Type | Used by |
@@ -175,7 +176,7 @@ Clients (node → file:line):
 | Status — `status_nodes.{hpp,cpp}` | `PublishHighLevelStatus`(state, state_name), `WasRainingAtStart`, `ClearCommand`, `MarkGuardHalt`(reason), `EndSession`, `IncrementSkippedSwaths`† |
 | Calibration — `calibration_nodes.{hpp,cpp}` | `RecordUndockStart`, `CalibrateHeadingFromUndock`(min_displacement_m), `SeedYawFromMotion`(distance_m, speed_ms, timeout_sec, min_displacement_m) |
 | Docking — `docking_nodes.{hpp,cpp}` | `DockRobot`(dock_id, dock_type), `UndockRobot`†(dock_type), `RecordResumeUndockFailure` |
-| Coverage — `coverage_nodes.{hpp,cpp}` | `GetNextUnmowedArea`(max_areas → out `area_index`), `FollowStrip`(max_detours_per_segment, detour_footprint_radius_m), `TransitToStrip`, `DetourAroundObstacle`†(forward_m, lateral_m), `PlanCoverageArea`(area_index) |
+| Coverage — `coverage_nodes.{hpp,cpp}` | `GetNextUnmowedArea`(max_areas → out `area_index`), `FollowStrip`(max_detours_per_segment, detour_footprint_radius_m), `TransitToStrip`(timeout_sec, ≤ 0 = `transitDeadlineSec(gap)`; a non-START_OCCUPIED failure is recorded in `BTContext::transit_to_strip_failed_at` so FollowStrip skips — not repeats — that first transit), `DetourAroundObstacle`†(forward_m, lateral_m), `PlanCoverageArea`(area_index) |
 | Recording — `recording_nodes.{hpp,cpp}` | `RecordArea`(simplification_tolerance, min_vertices, min_area, record_rate_hz, is_exclusion_zone) |
 
 † registered but not referenced by `trees/main_tree.xml`.

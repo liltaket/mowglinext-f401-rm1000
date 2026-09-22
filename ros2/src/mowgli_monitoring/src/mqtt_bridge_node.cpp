@@ -35,6 +35,7 @@
 #include <utility>
 
 #ifdef MOWGLI_HAS_MOSQUITTO
+#include <chrono>
 #include <functional>
 #include <mutex>
 #include <unordered_map>
@@ -121,6 +122,10 @@ struct MosquittoMqttClient::Impl
   rclcpp::Clock throttle_clock{RCL_STEADY_TIME};
   mosquitto* mosq{nullptr};
   bool connected{false};
+  std::chrono::steady_clock::time_point last_reconnect_attempt{};
+
+  static constexpr int kMaxLoopIterationsPerSpin = 64;
+  static constexpr std::chrono::seconds kReconnectMinInterval{1};
 
   std::mutex callbacks_mutex;
   std::unordered_map<std::string, MessageCallback> callbacks;
@@ -405,8 +410,20 @@ void MosquittoMqttClient::spin_once() noexcept
   {
     return;
   }
-  // Non-blocking loop iteration; timeout=0 means return immediately.
-  const int rc = mosquitto_loop(impl_->mosq, 0, 1);
+  // One non-blocking mosquitto_loop() call moves too little per tick: a field capture
+  // (2026-09-21) showed <prefix>/high_level_status reaching the broker at ~0.57 msg/s
+  // against ~1 msg/s produced, so the lag grew without bound (>9 min after 16 min).
+  // Keep looping while packets are still waiting to be written.
+  int rc = MOSQ_ERR_SUCCESS;
+  for (int i = 0; i < Impl::kMaxLoopIterationsPerSpin; ++i)
+  {
+    rc = mosquitto_loop(impl_->mosq, 0, 1);
+    if (rc != MOSQ_ERR_SUCCESS || !mosquitto_want_write(impl_->mosq))
+    {
+      break;
+    }
+  }
+
   if (rc != MOSQ_ERR_SUCCESS && rc != MOSQ_ERR_NO_CONN)
   {
     RCLCPP_WARN_THROTTLE(impl_->logger,
@@ -414,7 +431,13 @@ void MosquittoMqttClient::spin_once() noexcept
                          10000,
                          "mosquitto_loop error: %s — attempting reconnect",
                          mosquitto_strerror(rc));
-    mosquitto_reconnect(impl_->mosq);
+    // spin_once() runs at 20 Hz; mosquitto_reconnect() blocks on the TCP connect.
+    const auto now = std::chrono::steady_clock::now();
+    if (now - impl_->last_reconnect_attempt >= Impl::kReconnectMinInterval)
+    {
+      impl_->last_reconnect_attempt = now;
+      mosquitto_reconnect(impl_->mosq);
+    }
   }
 
   // libmosquitto invokes on_message_cb from inside mosquitto_loop(). Queue
@@ -499,6 +522,11 @@ void MqttBridgeNode::declare_parameters()
   // <prefix>/area_boundary's map-frame geometry with its WGS84 origin.
   datum_lat_ = declare_parameter<double>("datum_lat", 0.0);
   datum_lon_ = declare_parameter<double>("datum_lon", 0.0);
+  // Charging dock pose (map frame), injected from mowgli_robot.yaml by
+  // full_system.launch.py like the datum above; shown on <prefix>/area_boundary.
+  dock_pose_x_ = declare_parameter<double>("dock_pose_x", 0.0);
+  dock_pose_y_ = declare_parameter<double>("dock_pose_y", 0.0);
+  dock_pose_yaw_ = declare_parameter<double>("dock_pose_yaw", 0.0);
 
   if (publish_rate_ < 0.01 || publish_rate_ > 100.0)
   {
@@ -609,6 +637,18 @@ void MqttBridgeNode::create_subscriptions()
         on_gnss_status(msg);
       });
 
+  // Fused map-frame pose from the localizer: position and heading that do not jitter
+  // like the raw GPS fix. SensorDataQoS is compatible with the localizer's reliable
+  // publisher and with a best-effort one, should it ever become one.
+  sub_pose_ =
+      create_subscription<nav_msgs::msg::Odometry>("/odometry/filtered_map",
+                                                   sensor_qos,
+                                                   [this](
+                                                       nav_msgs::msg::Odometry::ConstSharedPtr msg)
+                                                   {
+                                                     on_pose(msg);
+                                                   });
+
   // Subscribe to MQTT command topics.
   mqtt_client_->subscribe(full_topic("command"),
                           [this](const std::string& topic,
@@ -673,6 +713,14 @@ void MqttBridgeNode::create_timer()
                              {
                                on_timer();
                              });
+
+  // The network loop must not share publish_rate's cadence: at 1 Hz it could not
+  // drain the outgoing queue and <prefix>/high_level_status fell minutes behind.
+  net_timer_ = create_wall_timer(std::chrono::milliseconds(kNetworkLoopPeriodMs),
+                                 [this]()
+                                 {
+                                   mqtt_client_->spin_once();
+                                 });
 }
 
 // ---------------------------------------------------------------------------
@@ -681,12 +729,13 @@ void MqttBridgeNode::create_timer()
 
 void MqttBridgeNode::on_status(mowgli_interfaces::msg::Status::ConstSharedPtr msg)
 {
-  mqtt_client_->publish(full_topic("status"), serialise_status(*msg), /*retain=*/true);
+  // Latest value only; on_timer() publishes it at most publish_rate_ times a second.
+  pending_status_ = *msg;
 }
 
 void MqttBridgeNode::on_power(mowgli_interfaces::msg::Power::ConstSharedPtr msg)
 {
-  mqtt_client_->publish(full_topic("power"), serialise_power(*msg), /*retain=*/true);
+  pending_power_ = *msg;
 }
 
 void MqttBridgeNode::on_emergency(mowgli_interfaces::msg::Emergency::ConstSharedPtr msg)
@@ -725,7 +774,18 @@ void MqttBridgeNode::on_gps_fix(sensor_msgs::msg::NavSatFix::ConstSharedPtr msg)
 
 void MqttBridgeNode::on_gnss_status(mowgli_interfaces::msg::GnssStatus::ConstSharedPtr msg)
 {
-  mqtt_client_->publish(full_topic("rtk_status"), serialise_rtk_status(*msg), /*retain=*/true);
+  pending_gnss_status_ = *msg;
+}
+
+void MqttBridgeNode::on_pose(nav_msgs::msg::Odometry::ConstSharedPtr msg)
+{
+  const auto& p = msg->pose.pose;
+  if (!std::isfinite(p.position.x) || !std::isfinite(p.position.y) ||
+      !std::isfinite(p.orientation.z) || !std::isfinite(p.orientation.w))
+  {
+    return;  // a localizer that has not converged yet must not put NaN on the wire
+  }
+  pending_pose_ = *msg;
 }
 
 // ---------------------------------------------------------------------------
@@ -746,6 +806,13 @@ bool MqttBridgeNode::parse_command_payload(const std::string& payload, uint8_t& 
   }
   out_command = static_cast<uint8_t>(command_int);
   return true;
+}
+
+bool MqttBridgeNode::is_publish_due(const rclcpp::Time& now,
+                                    const rclcpp::Time& last_publish,
+                                    double min_interval_s)
+{
+  return (now - last_publish).seconds() >= min_interval_s;
 }
 
 bool MqttBridgeNode::is_high_level_status_stale(bool received_before,
@@ -969,13 +1036,12 @@ void MqttBridgeNode::publish_areas_if_changed(const std::vector<AreaSummary>& ar
 }
 
 // ---------------------------------------------------------------------------
-// Timer: network loop + rate-limited position publish
+// Timers: rate-limited publishes (on_timer) + network loop (net_timer_)
 // ---------------------------------------------------------------------------
 
 void MqttBridgeNode::on_timer()
 {
-  // Drive the MQTT network loop.
-  mqtt_client_->spin_once();
+  // The MQTT network loop runs on net_timer_, not here.
 
   // Attempt reconnect if disconnected.
   if (!mqtt_client_->is_connected())
@@ -1021,37 +1087,35 @@ void MqttBridgeNode::on_timer()
     }
   }
 
-  // Rate-limited position publish.
-  if (pending_odom_.has_value())
+  // Rate-limited publishes: each topic sends only its latest pending message, at most
+  // once per 1/publish_rate_ seconds. emergency and high_level_status are not limited
+  // (see their callbacks) — they are low-rate and must not be delayed.
+  const rclcpp::Time flush_time = now();
+  const double min_interval = 1.0 / publish_rate_;
+  const auto flush = [&](auto& pending,
+                         rclcpp::Time& last_publish,
+                         const char* suffix,
+                         auto&& serialise,
+                         bool retain)
   {
-    const rclcpp::Time t = now();
-    const double elapsed = (t - last_odom_publish_).seconds();
-    const double min_interval = 1.0 / publish_rate_;
-
-    if (elapsed >= min_interval)
+    if (pending.has_value() && is_publish_due(flush_time, last_publish, min_interval))
     {
-      mqtt_client_->publish(full_topic("position"),
-                            serialise_position(*pending_odom_),
-                            /*retain=*/false);
-      last_odom_publish_ = t;
-      pending_odom_.reset();
+      mqtt_client_->publish(full_topic(suffix), serialise(*pending), retain);
+      last_publish = flush_time;
+      pending.reset();
     }
-  }
+  };
 
-  // Rate-limited GPS publish (same window as position above).
-  if (pending_gps_.has_value())
-  {
-    const rclcpp::Time t = now();
-    const double elapsed = (t - last_gps_publish_).seconds();
-    const double min_interval = 1.0 / publish_rate_;
-
-    if (elapsed >= min_interval)
-    {
-      mqtt_client_->publish(full_topic("gps"), serialise_gps(*pending_gps_), /*retain=*/false);
-      last_gps_publish_ = t;
-      pending_gps_.reset();
-    }
-  }
+  flush(pending_odom_, last_odom_publish_, "position", serialise_position, /*retain=*/false);
+  flush(pending_gps_, last_gps_publish_, "gps", serialise_gps, /*retain=*/false);
+  flush(pending_status_, last_status_publish_, "status", serialise_status, /*retain=*/true);
+  flush(pending_power_, last_power_publish_, "power", serialise_power, /*retain=*/true);
+  flush(pending_pose_, last_pose_publish_, "pose", serialise_pose, /*retain=*/false);
+  flush(pending_gnss_status_,
+        last_gnss_status_publish_,
+        "rtk_status",
+        serialise_rtk_status,
+        /*retain=*/true);
 
   maybe_poll_area_boundaries();
 
@@ -1162,7 +1226,11 @@ void MqttBridgeNode::finish_area_boundary_poll(
     std::shared_ptr<std::vector<std::pair<uint32_t, mowgli_interfaces::msg::MapArea>>> accumulated)
 {
   area_poll_in_progress_ = false;
-  const std::string json = serialise_area_boundaries(*accumulated, datum_lat_, datum_lon_);
+  const std::string json =
+      serialise_area_boundaries(*accumulated,
+                                datum_lat_,
+                                datum_lon_,
+                                make_dock_pose(dock_pose_x_, dock_pose_y_, dock_pose_yaw_));
   if (json == last_area_boundary_json_)
   {
     // Retained topic: republish only when the geometry actually changed,
@@ -1272,6 +1340,36 @@ std::string MqttBridgeNode::serialise_position(const nav_msgs::msg::Odometry& ms
   char buf[128];
   std::snprintf(buf, sizeof(buf), "{\"x\":%.4f,\"y\":%.4f,\"theta\":%.4f}", x, y, theta);
   return std::string{buf};
+}
+
+std::string MqttBridgeNode::serialise_pose(const nav_msgs::msg::Odometry& msg)
+{
+  const auto& q = msg.pose.pose.orientation;
+  const double yaw = std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+
+  char buf[128];
+  std::snprintf(buf,
+                sizeof(buf),
+                "{\"x\":%.3f,\"y\":%.3f,\"yaw\":%.4f}",
+                msg.pose.pose.position.x,
+                msg.pose.pose.position.y,
+                yaw);
+  return std::string{buf};
+}
+
+std::optional<MqttBridgeNode::DockPose> MqttBridgeNode::make_dock_pose(double x,
+                                                                       double y,
+                                                                       double yaw)
+{
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(yaw))
+  {
+    return std::nullopt;
+  }
+  if (x == 0.0 && y == 0.0 && yaw == 0.0)
+  {
+    return std::nullopt;  // the template default: no dock calibrated yet
+  }
+  return DockPose{x, y, yaw};
 }
 
 std::string MqttBridgeNode::serialise_diagnostics(const diagnostic_msgs::msg::DiagnosticArray& msg)
@@ -1474,7 +1572,8 @@ std::string MqttBridgeNode::serialise_areas(const std::vector<AreaSummary>& area
 std::string MqttBridgeNode::serialise_area_boundaries(
     const std::vector<std::pair<uint32_t, mowgli_interfaces::msg::MapArea>>& areas,
     double datum_lat,
-    double datum_lon)
+    double datum_lon,
+    const std::optional<DockPose>& dock)
 {
   // Unbounded-length payload (polygon point counts vary), so this is built
   // with std::string concatenation rather than a fixed snprintf buffer —
@@ -1538,7 +1637,19 @@ std::string MqttBridgeNode::serialise_area_boundaries(
     }
     json += "]}";
   }
-  json += "]}";
+  json += ']';
+  if (dock.has_value())
+  {
+    char dock_json[96];
+    std::snprintf(dock_json,
+                  sizeof(dock_json),
+                  ",\"dock\":{\"x\":%.3f,\"y\":%.3f,\"yaw\":%.4f}",
+                  dock->x,
+                  dock->y,
+                  dock->yaw);
+    json += dock_json;
+  }
+  json += '}';
   return json;
 }
 
