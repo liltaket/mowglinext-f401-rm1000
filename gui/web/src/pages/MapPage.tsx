@@ -14,11 +14,12 @@ import {FeatureCollection, Position} from "geojson";
 import {useMowerAction} from "../components/MowerActions.tsx";
 import {MapStyle} from "./MapStyle.tsx";
 import {drawLine, itranspose, transpose} from "../utils/map.tsx";
+import {resolveMowerAppearance, shouldDisplayMowerImage, type MowerAppearanceId} from "../constants/mowerAppearances.ts";
 import {useSettings} from "../hooks/useSettings.ts";
 import {useConfig} from "../hooks/useConfig.tsx";
 import {useEnv} from "../hooks/useEnv.tsx";
 import {Spinner} from "../components/Spinner.tsx";
-import {MowingFeature, MowingAreaFeature, DockFeatureBase, MowingFeatureBase, NavigationFeature, ObstacleFeature, ActivePathFeature, PathFeature} from "../types/map.ts";
+import {MowingFeature, MowingAreaFeature, DockFeatureBase, LineFeatureBase, MowingFeatureBase, MowerFeatureBase, NavigationFeature, ObstacleFeature, ActivePathFeature, PathFeature} from "../types/map.ts";
 import {useMapEditHistory} from "./map/hooks/useMapEditHistory.ts";
 import {useMapOffset} from "./map/hooks/useMapOffset.ts";
 import {useMapBearing} from "./map/hooks/useMapBearing.ts";
@@ -36,6 +37,7 @@ import {TrackedObstaclesPanel} from "./map/components/TrackedObstaclesPanel.tsx"
 import {ObstacleProposalsPanel} from "./map/components/ObstacleProposalsPanel.tsx";
 import {extractObstacleProposals, isDigProposal} from "./map/utils/obstacleProposals.ts";
 import {MapOffsetPanel} from "./map/components/MapOffsetPanel.tsx";
+import {MowerImageMarker} from "./map/components/MowerImageMarker.tsx";
 import {MapToolbar} from "./map/components/MapToolbar.tsx";
 import {MapToolbarMobile} from "./map/components/MapToolbarMobile.tsx";
 import {MapEditorToolbar} from "./map/components/MapEditorToolbar.tsx";
@@ -84,7 +86,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         type: "FeatureCollection",
         features: []
     })
-    const {config, setConfig} = useConfig(["gui.map.offset.x", "gui.map.offset.y", "gui.map.display.bearing"])
+    const {config, setConfig} = useConfig(["gui.map.offset.x", "gui.map.offset.y", "gui.map.display.bearing", "gui.map.mower.appearance"])
     const envs = useEnv()
     const guiApi = useApi()
     const [tileUri, setTileUri] = useState<string | undefined>()
@@ -98,6 +100,19 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     // Same link for PENDING obstacle proposals (wheel-slip dig reports).
     const [selectedProposalId, setSelectedProposalId] = useState<number | null>(null);
     const [features, setFeatures] = useState<Record<string, MowingFeature>>({});
+    const mowerAppearance = resolveMowerAppearance(config["gui.map.mower.appearance"]);
+    const [loadedMowerImageSrc, setLoadedMowerImageSrc] = useState<string>();
+    const mowerImage = mowerAppearance.mowerImage;
+    const mowerFeature = features.mower;
+    const mowerImageReady = shouldDisplayMowerImage(
+        mowerAppearance,
+        loadedMowerImageSrc,
+        mowerFeature instanceof MowerFeatureBase,
+    );
+    const handleMowerAppearanceChange = (id: MowerAppearanceId) => {
+        setLoadedMowerImageSrc(undefined);
+        void setConfig({"gui.map.mower.appearance": id});
+    };
     const [dockPlacementMode, setDockPlacementMode] = useState<boolean>(false);
     // OpenMower import preview — populated by handleImportOpenMower after
     // the file is uploaded + parsed server-side. Modal renders when set.
@@ -167,6 +182,10 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const displayFeatures = useMemo<GeoJSON.FeatureCollection>(() => {
         const feats = Object.values(features)
             .filter(f => !(f instanceof MowingFeatureBase))
+            .filter(f => !mowerImageReady || (
+                f.id !== "mower" && f.id !== "mower-heading" &&
+                f.properties.feature_type !== "mower-footprint"
+            ))
             .map(f => ({
                 type: "Feature" as const,
                 id: f.id,
@@ -189,7 +208,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         }
 
         return {type: "FeatureCollection", features: feats};
-    }, [features, offsetX, offsetY, datum, LAYER_COLORS]);
+    }, [features, offsetX, offsetY, datum, LAYER_COLORS, mowerImageReady]);
 
     // Layers for the persistent tracked-obstacle polygons (feature_type
     // 'dyn-obstacle', carried in the same display-features source). Rendered as
@@ -244,6 +263,29 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         mapInstanceRef,
         robotPoseRef,
     });
+
+    const mowerHeadingFeature = features["mower-heading"];
+    let mowerHeadingRad = 0;
+    if (mowerHeadingFeature instanceof LineFeatureBase && mowerHeadingFeature.geometry.coordinates.length >= 2) {
+        const start = mowerHeadingFeature.geometry.coordinates[0];
+        const end = mowerHeadingFeature.geometry.coordinates[1];
+        const [startX, startY] = itranspose(offsetX, offsetY, datum, start[1], start[0]);
+        const [endX, endY] = itranspose(offsetX, offsetY, datum, end[1], end[0]);
+        mowerHeadingRad = Math.atan2(endY - startY, endX - startX);
+    }
+    const mowerImageMarker = mowerImage && mowerFeature instanceof MowerFeatureBase
+        ? <MowerImageMarker
+            src={mowerImage.src}
+            longitude={mowerFeature.geometry.coordinates[0]}
+            latitude={mowerFeature.geometry.coordinates[1]}
+            headingRad={mowerHeadingRad}
+            visibleLengthM={mowerImage.visibleLengthM}
+            visibleLengthFraction={mowerImage.visibleLengthFraction}
+            baseLinkAnchorY={mowerImage.baseLinkAnchorY}
+            onLoad={() => setLoadedMowerImageSrc(mowerImage.src)}
+            onError={() => setLoadedMowerImageSrc(undefined)}
+        />
+        : null;
 
     // Compute map bounds for the Mapbox viewport — depends on map data for centering
     const [map_ne, map_sw] = useMemo<[[number, number], [number, number]]>(() => {
@@ -906,6 +948,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         {/* Persistent tracked-obstacle polygons + id labels (compact overview: no highlight) */}
                         {renderDynObstacleLayers(false)}
                     </Source>
+                    {mowerImageMarker}
                 </Map> : <Spinner/>}
             </div>
         );
@@ -1065,6 +1108,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         {/* Persistent tracked-obstacle polygons + id labels + hover/select highlight */}
                         {renderDynObstacleLayers(true)}
                     </Source>
+                    {mowerImageMarker}
                     {/* PENDING obstacle proposals (dig reports): dashed, never a real keepout */}
                     {renderProposalLayers()}
                     {/* fusion_graph's LiDAR anchor map (walls as ink, scanned ground as a faint wash). */}
@@ -1136,6 +1180,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         onUndo={handleUndo}
                         onRedo={handleRedo}
                         onToggleSatellite={() => setUseSatellite(!useSatellite)}
+                        mowerAppearanceId={mowerAppearance.id}
+                        onMowerAppearanceChange={handleMowerAppearanceChange}
                         onManualMode={handleManualMode}
                         onStopManualMode={handleStopManualMode}
                         onBackupMap={handleBackupMap}
@@ -1192,6 +1238,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         <MapToolbar
                             manualMode={manualMode}
                             useSatellite={useSatellite}
+                            mowerAppearanceId={mowerAppearance.id}
+                            onMowerAppearanceChange={handleMowerAppearanceChange}
                             mowingAreas={mowingAreas}
                             stateName={highLevelStatus.highLevelStatus.state_name}
                             highLevelState={highLevelStatus.highLevelStatus.state}

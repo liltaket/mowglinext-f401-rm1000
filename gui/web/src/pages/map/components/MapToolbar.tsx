@@ -27,6 +27,7 @@ import {useTranslation} from "react-i18next";
 import AsyncButton from "../../../components/AsyncButton.tsx";
 import AsyncDropDownButton from "../../../components/AsyncDropDownButton.tsx";
 import type {Feature} from "geojson";
+import {MOWER_APPEARANCES, type MowerAppearanceId} from "../../../constants/mowerAppearances.ts";
 
 interface MowingAreaItem extends MenuItemType {
     feat: Feature;
@@ -39,6 +40,8 @@ interface MapToolbarProps {
     stateName?: string;
     highLevelState?: number;
     emergency?: boolean;
+    mowerAppearanceId?: MowerAppearanceId;
+    onMowerAppearanceChange?: (id: MowerAppearanceId) => void;
     onEditMap: () => void;
     onToggleSatellite: () => void;
     onManualMode: () => Promise<void>;
@@ -67,6 +70,7 @@ interface MapToolbarProps {
 
 export const MapToolbar = ({
     manualMode, useSatellite, mowingAreas, stateName, highLevelState, emergency,
+    mowerAppearanceId = "urdf", onMowerAppearanceChange = () => {},
     onEditMap, onToggleSatellite,
     onManualMode, onStopManualMode,
     onBackupMap, onRestoreMap, onDownloadGeoJSON, onImportOpenMower, onResetMowingProgress,
@@ -104,6 +108,15 @@ export const MapToolbar = ({
         ...(onTogglePitch
             ? [{key: "pitch", icon: <GlobalOutlined />, label: pitched ? t("mapToolbar.flattenMap") : t("mapToolbar.tilt3dView")} satisfies NonNullable<MenuProps["items"]>[number]]
             : []),
+        {
+            key: "mowerAppearance",
+            label: t("mapToolbar.mowerAppearance"),
+            children: Object.values(MOWER_APPEARANCES).map((appearance) => ({
+                key: `mowerAppearance:${appearance.id}`,
+                icon: appearance.id === mowerAppearanceId ? <CheckOutlined /> : undefined,
+                label: t(appearance.labelKey),
+            })),
+        },
         {type: "divider"},
         {key: "areaRecording", icon: <AimOutlined />, label: t("mapToolbar.areaRecording")},
         {key: "mowNext", icon: <ForwardOutlined />, label: t("mapToolbar.mowNextArea")},
@@ -136,6 +149,8 @@ export const MapToolbar = ({
         switch (key) {
             case "satellite": onToggleSatellite(); break;
             case "pitch": onTogglePitch?.(); break;
+            case "mowerAppearance:urdf": onMowerAppearanceChange("urdf"); break;
+            case "mowerAppearance:biltema-rm1000": onMowerAppearanceChange("biltema-rm1000"); break;
             case "manual": safeCall(() => onManualMode()); break;
             case "stopManual": safeCall(() => onStopManualMode()); break;
             case "areaRecording": safeCall(onAreaRecording); break;

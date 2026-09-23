@@ -32,6 +32,7 @@ import {
     PauseOutlined,
     ThunderboltOutlined,
     ImportOutlined,
+    CheckOutlined,
 } from "@ant-design/icons";
 import type {MenuInfo} from "rc-menu/lib/interface";
 import AsyncButton from "../../../components/AsyncButton.tsx";
@@ -39,6 +40,7 @@ import type {Feature} from "geojson";
 import type {MenuItemType} from "antd/es/menu/interface";
 import {ShapePickerDropdown} from "./ShapePickerDropdown.tsx";
 import type {ShapeType} from "../hooks/useMapEditing.ts";
+import {MOWER_APPEARANCES, type MowerAppearanceId} from "../../../constants/mowerAppearances.ts";
 
 interface MowingAreaItem extends MenuItemType {
     feat: Feature;
@@ -80,6 +82,8 @@ interface MapToolbarMobileProps {
     stateName?: string;
     highLevelState?: number;
     emergency?: boolean;
+    mowerAppearanceId?: MowerAppearanceId;
+    onMowerAppearanceChange?: (id: MowerAppearanceId) => void;
     onStart?: () => Promise<void>;
     onHome?: () => Promise<void>;
     onEmergencyOn?: () => Promise<void>;
@@ -104,6 +108,7 @@ export const MapToolbarMobile = ({
     onDrawPolygon, onDrawShape, onDrawEmoji, onTrash, onCombine, onSubtract, onSplit,
     onPlaceDock, dockPlacementMode,
     stateName, highLevelState, emergency,
+    mowerAppearanceId = "urdf", onMowerAppearanceChange = () => {},
     onStart, onHome, onEmergencyOn, onEmergencyOff,
     onAreaRecording, onMowNextArea, onContinueOrPause,
     onBladeForward, onBladeBackward, onBladeOff,
@@ -189,6 +194,15 @@ export const MapToolbarMobile = ({
 
     const dataMenuItems: MenuProps["items"] = [
         {key: "satellite", icon: <GlobalOutlined />, label: useSatellite ? t("mapToolbarMobile.darkMap") : t("mapToolbarMobile.satellite")},
+        {
+            key: "mowerAppearance",
+            label: t("mapToolbar.mowerAppearance"),
+            children: Object.values(MOWER_APPEARANCES).map((appearance) => ({
+                key: `mowerAppearance:${appearance.id}`,
+                icon: appearance.id === mowerAppearanceId ? <CheckOutlined /> : undefined,
+                label: t(appearance.labelKey),
+            })),
+        },
         {type: "divider"},
         {key: "areaRecording", icon: <AimOutlined />, label: t("mapToolbarMobile.areaRecording")},
         {key: "mowNext", icon: <ForwardOutlined />, label: t("mapToolbarMobile.mowNextArea")},
@@ -218,6 +232,8 @@ export const MapToolbarMobile = ({
     const handleMoreClick: MenuProps["onClick"] = ({key}: MenuInfo) => {
         switch (key) {
             case "satellite": onToggleSatellite(); break;
+            case "mowerAppearance:urdf": onMowerAppearanceChange("urdf"); break;
+            case "mowerAppearance:biltema-rm1000": onMowerAppearanceChange("biltema-rm1000"); break;
             case "areaRecording": safeCall(onAreaRecording); break;
             case "mowNext": safeCall(onMowNextArea); break;
             case "continueOrPause": safeCall(onContinueOrPause); break;
