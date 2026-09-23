@@ -41,6 +41,7 @@ import type {MenuItemType} from "antd/es/menu/interface";
 import {ShapePickerDropdown} from "./ShapePickerDropdown.tsx";
 import type {ShapeType} from "../hooks/useMapEditing.ts";
 import {MOWER_APPEARANCES, type MowerAppearanceId} from "../../../constants/mowerAppearances.ts";
+import {parseMowerAppearanceMenuKey} from "../../../constants/mowerAppearanceMenuKey.ts";
 
 interface MowingAreaItem extends MenuItemType {
     feat: Feature;
@@ -230,10 +231,14 @@ export const MapToolbarMobile = ({
     ];
 
     const handleMoreClick: MenuProps["onClick"] = ({key}: MenuInfo) => {
+        const appearanceId = parseMowerAppearanceMenuKey(key);
+        if (appearanceId) {
+            onMowerAppearanceChange(appearanceId);
+            return;
+        }
+
         switch (key) {
             case "satellite": onToggleSatellite(); break;
-            case "mowerAppearance:urdf": onMowerAppearanceChange("urdf"); break;
-            case "mowerAppearance:biltema-rm1000": onMowerAppearanceChange("biltema-rm1000"); break;
             case "areaRecording": safeCall(onAreaRecording); break;
             case "mowNext": safeCall(onMowNextArea); break;
             case "continueOrPause": safeCall(onContinueOrPause); break;

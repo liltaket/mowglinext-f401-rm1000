@@ -1499,6 +1499,7 @@
     "mowerAppearance": "Image de la tondeuse sur la carte",
     "mowerAppearanceUrdf": "Silhouette URDF (repli automatique)",
     "mowerAppearanceBiltemaRm1000": "Biltema RM1000",
+    "mowerAppearanceBiltemaRm1000Alt": "Tondeuse Biltema RM1000",
     "darkMap": "Carte sombre",
     "satellite": "Satellite",
     "flattenMap": "Aplatir la carte",

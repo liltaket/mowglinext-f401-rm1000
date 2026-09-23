@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {resolveMowerAppearance, rosHeadingToMapboxRotation, shouldDisplayMowerImage} from "./mowerAppearances.ts";
+import {resolveMowerAppearance, shouldDisplayMowerImage} from "./mowerAppearances.ts";
 
 describe("mower appearance registry", () => {
     it("uses the bundled RM1000 image only after an explicit GUI appearance selection", () => {
@@ -17,19 +17,11 @@ describe("mower appearance registry", () => {
     it("keeps the URDF silhouette until the selected image is loaded and a pose exists", () => {
         const appearance = resolveMowerAppearance("biltema-rm1000");
         const src = appearance.mowerImage!.src;
-        expect(shouldDisplayMowerImage(appearance, undefined, true)).toBe(false);
-        expect(shouldDisplayMowerImage(appearance, src, false)).toBe(false);
-        expect(shouldDisplayMowerImage(appearance, "/missing.webp", true)).toBe(false);
-        expect(shouldDisplayMowerImage(appearance, src, true)).toBe(true);
-        expect(shouldDisplayMowerImage(resolveMowerAppearance("urdf"), src, true)).toBe(false);
-    });
-});
-
-describe("ROS heading conversion for Mapbox markers", () => {
-    it("maps east, north, west and south headings to clockwise-from-north rotations", () => {
-        expect(rosHeadingToMapboxRotation(0)).toBe(90);
-        expect(rosHeadingToMapboxRotation(Math.PI / 2)).toBeCloseTo(0);
-        expect(rosHeadingToMapboxRotation(Math.PI)).toBeCloseTo(-90);
-        expect(rosHeadingToMapboxRotation(-Math.PI / 2)).toBeCloseTo(180);
+        expect(shouldDisplayMowerImage(appearance, undefined, true, true)).toBe(false);
+        expect(shouldDisplayMowerImage(appearance, src, false, true)).toBe(false);
+        expect(shouldDisplayMowerImage(appearance, src, true, false)).toBe(false);
+        expect(shouldDisplayMowerImage(appearance, "/missing.webp", true, true)).toBe(false);
+        expect(shouldDisplayMowerImage(appearance, src, true, true)).toBe(true);
+        expect(shouldDisplayMowerImage(resolveMowerAppearance("urdf"), src, true, true)).toBe(false);
     });
 });

@@ -3,19 +3,22 @@
  */
 export type MowerAppearanceId = "urdf" | "biltema-rm1000";
 
+export interface MapImageAppearance {
+    src: string;
+    altKey: string;
+    /** Physical length represented by the visible object's long axis. */
+    visibleLengthM: number;
+    /** Fraction of the square source image occupied along its long axis. */
+    visibleLengthFraction: number;
+    /** Pose location in normalized source-image coordinates (0..1). */
+    poseAnchor: {x: number; y: number};
+}
+
 export interface MowerAppearance {
     id: MowerAppearanceId;
     labelKey: string;
-    mowerImage?: {
-        src: string;
-        /** Physical length represented by the visible mower in the asset. */
-        visibleLengthM: number;
-        /** Fraction of the square asset occupied by the mower's visible length. */
-        visibleLengthFraction: number;
-        /** Position of base_link along the image, measured from its top edge. */
-        baseLinkAnchorY: number;
-    };
-    dockImage?: string;
+    mowerImage?: MapImageAppearance;
+    dockImage?: MapImageAppearance;
 }
 
 export const MOWER_APPEARANCES: Record<MowerAppearanceId, MowerAppearance> = {
@@ -25,11 +28,12 @@ export const MOWER_APPEARANCES: Record<MowerAppearanceId, MowerAppearance> = {
         labelKey: "mapToolbar.mowerAppearanceBiltemaRm1000",
         mowerImage: {
             src: "/assets/robots/biltema-rm1000/mower.webp",
-            visibleLengthM: 0.60,
+            altKey: "mapToolbar.mowerAppearanceBiltemaRm1000Alt",
+            visibleLengthM: 0.57,
             visibleLengthFraction: 0.9,
-            // base_link is the rear wheel axis; on this 0.60 m chassis it sits
-            // 0.48 m behind the front edge (about 80% down from the nose).
-            baseLinkAnchorY: 0.77,
+            // The source's long axis runs front-to-back; the image pose point
+            // is near the rear axle, not at the visual center of the body.
+            poseAnchor: {x: 0.5, y: 0.77},
         },
     },
 };
@@ -44,14 +48,7 @@ export function shouldDisplayMowerImage(
     appearance: MowerAppearance,
     loadedSrc: string | undefined,
     hasPose: boolean,
+    hasHeading: boolean,
 ): boolean {
-    return Boolean(appearance.mowerImage && loadedSrc === appearance.mowerImage.src && hasPose);
-}
-
-/** ROS yaw is counter-clockwise from east; Mapbox marker rotation is clockwise
- * from north. `rotationAlignment="map"` then keeps that heading with the map
- * when the map bearing changes.
- */
-export function rosHeadingToMapboxRotation(headingRad: number): number {
-    return 90 - headingRad * (180 / Math.PI);
+    return Boolean(appearance.mowerImage && loadedSrc === appearance.mowerImage.src && hasPose && hasHeading);
 }

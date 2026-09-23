@@ -37,7 +37,8 @@ import {TrackedObstaclesPanel} from "./map/components/TrackedObstaclesPanel.tsx"
 import {ObstacleProposalsPanel} from "./map/components/ObstacleProposalsPanel.tsx";
 import {extractObstacleProposals, isDigProposal} from "./map/utils/obstacleProposals.ts";
 import {MapOffsetPanel} from "./map/components/MapOffsetPanel.tsx";
-import {MowerImageMarker} from "./map/components/MowerImageMarker.tsx";
+import {MapImageMarker} from "./map/components/MapImageMarker.tsx";
+import {getMowerHeadingRad, hasValidMowerPose} from "./map/components/mapImageMarkerMath.ts";
 import {MapToolbar} from "./map/components/MapToolbar.tsx";
 import {MapToolbarMobile} from "./map/components/MapToolbarMobile.tsx";
 import {MapEditorToolbar} from "./map/components/MapEditorToolbar.tsx";
@@ -104,11 +105,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const [loadedMowerImageSrc, setLoadedMowerImageSrc] = useState<string>();
     const mowerImage = mowerAppearance.mowerImage;
     const mowerFeature = features.mower;
-    const mowerImageReady = shouldDisplayMowerImage(
-        mowerAppearance,
-        loadedMowerImageSrc,
-        mowerFeature instanceof MowerFeatureBase,
-    );
+    const mowerHasValidPose = mowerFeature instanceof MowerFeatureBase && hasValidMowerPose(mowerFeature.geometry.coordinates);
+    const mowerHeadingFeature = features["mower-heading"];
     const handleMowerAppearanceChange = (id: MowerAppearanceId) => {
         setLoadedMowerImageSrc(undefined);
         void setConfig({"gui.map.mower.appearance": id});
@@ -177,6 +175,17 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         }
         return [_datumLat, _datumLon, 0]
     }, [_datumLat, _datumLon])
+
+    const mowerHeadingRad = mowerHeadingFeature instanceof LineFeatureBase
+        ? getMowerHeadingRad(mowerHeadingFeature.geometry.coordinates, (lng, lat) =>
+            itranspose(offsetX, offsetY, datum, lat, lng))
+        : undefined;
+    const mowerImageReady = shouldDisplayMowerImage(
+        mowerAppearance,
+        loadedMowerImageSrc,
+        mowerHasValidPose,
+        mowerHeadingRad !== undefined,
+    );
 
     // Display-only features (mower, dock, heading, paths) rendered as separate layers
     const displayFeatures = useMemo<GeoJSON.FeatureCollection>(() => {
@@ -264,24 +273,13 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         robotPoseRef,
     });
 
-    const mowerHeadingFeature = features["mower-heading"];
-    let mowerHeadingRad = 0;
-    if (mowerHeadingFeature instanceof LineFeatureBase && mowerHeadingFeature.geometry.coordinates.length >= 2) {
-        const start = mowerHeadingFeature.geometry.coordinates[0];
-        const end = mowerHeadingFeature.geometry.coordinates[1];
-        const [startX, startY] = itranspose(offsetX, offsetY, datum, start[1], start[0]);
-        const [endX, endY] = itranspose(offsetX, offsetY, datum, end[1], end[0]);
-        mowerHeadingRad = Math.atan2(endY - startY, endX - startX);
-    }
-    const mowerImageMarker = mowerImage && mowerFeature instanceof MowerFeatureBase
-        ? <MowerImageMarker
-            src={mowerImage.src}
+    const mowerImageMarker = mowerImage && mowerFeature instanceof MowerFeatureBase && mowerHasValidPose && mowerHeadingRad !== undefined
+        ? <MapImageMarker
+            image={mowerImage}
+            alt={t(mowerImage.altKey)}
             longitude={mowerFeature.geometry.coordinates[0]}
             latitude={mowerFeature.geometry.coordinates[1]}
             headingRad={mowerHeadingRad}
-            visibleLengthM={mowerImage.visibleLengthM}
-            visibleLengthFraction={mowerImage.visibleLengthFraction}
-            baseLinkAnchorY={mowerImage.baseLinkAnchorY}
             onLoad={() => setLoadedMowerImageSrc(mowerImage.src)}
             onError={() => setLoadedMowerImageSrc(undefined)}
         />

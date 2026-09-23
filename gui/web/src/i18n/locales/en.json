@@ -1503,6 +1503,7 @@
     "mowerAppearance": "Mower map image",
     "mowerAppearanceUrdf": "URDF silhouette (automatic fallback)",
     "mowerAppearanceBiltemaRm1000": "Biltema RM1000",
+    "mowerAppearanceBiltemaRm1000Alt": "Biltema RM1000 mower",
     "darkMap": "Dark map",
     "satellite": "Satellite",
     "flattenMap": "Flatten map",

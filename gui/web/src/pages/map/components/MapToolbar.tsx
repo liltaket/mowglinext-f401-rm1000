@@ -28,6 +28,7 @@ import AsyncButton from "../../../components/AsyncButton.tsx";
 import AsyncDropDownButton from "../../../components/AsyncDropDownButton.tsx";
 import type {Feature} from "geojson";
 import {MOWER_APPEARANCES, type MowerAppearanceId} from "../../../constants/mowerAppearances.ts";
+import {parseMowerAppearanceMenuKey} from "../../../constants/mowerAppearanceMenuKey.ts";
 
 interface MowingAreaItem extends MenuItemType {
     feat: Feature;
@@ -146,11 +147,15 @@ export const MapToolbar = ({
     ];
 
     const handleMoreClick: MenuProps["onClick"] = ({key}: MenuInfo) => {
+        const appearanceId = parseMowerAppearanceMenuKey(key);
+        if (appearanceId) {
+            onMowerAppearanceChange(appearanceId);
+            return;
+        }
+
         switch (key) {
             case "satellite": onToggleSatellite(); break;
             case "pitch": onTogglePitch?.(); break;
-            case "mowerAppearance:urdf": onMowerAppearanceChange("urdf"); break;
-            case "mowerAppearance:biltema-rm1000": onMowerAppearanceChange("biltema-rm1000"); break;
             case "manual": safeCall(() => onManualMode()); break;
             case "stopManual": safeCall(() => onStopManualMode()); break;
             case "areaRecording": safeCall(onAreaRecording); break;
