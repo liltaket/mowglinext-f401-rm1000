@@ -68,7 +68,7 @@ export function MowerImageMarker({
             rotationAlignment="map"
             style={{width: assetSizePx, height: assetSizePx, pointerEvents: "none"}}
         >
-            <img
+                <img
                 src={src}
                 alt="Biltema RM1000 mower"
                 draggable={false}
@@ -82,7 +82,10 @@ export function MowerImageMarker({
                 style={{
                     position: "absolute",
                     left: 0,
-                    top: -assetSizePx * baseLinkAnchorY,
+                    // Marker anchor="center" places the map coordinate at the
+                    // center of this square. Offset the image so its base_link
+                    // point at baseLinkAnchorY lands on that center.
+                    top: assetSizePx * (0.5 - baseLinkAnchorY),
                     width: "100%",
                     height: "100%",
                     maxWidth: "none",

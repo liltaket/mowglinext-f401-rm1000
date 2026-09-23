@@ -3,7 +3,8 @@ import {beforeEach, describe, expect, it, vi} from "vitest";
 import {MowerImageMarker} from "./MowerImageMarker.tsx";
 
 vi.mock("react-map-gl/mapbox", () => ({
-    Marker: ({children}: {children: React.ReactNode}) => <div data-testid="map-marker">{children}</div>,
+    Marker: ({children, style}: {children: React.ReactNode; style?: React.CSSProperties}) =>
+        <div data-testid="map-marker" style={style}>{children}</div>,
     useMap: () => ({current: {
         project: ([longitude, latitude]: [number, number]) => ({x: longitude * 1e9, y: latitude * 1e9}),
         on: vi.fn(),
@@ -33,6 +34,10 @@ describe("MowerImageMarker", () => {
 
         const image = await screen.findByAltText("Biltema RM1000 mower");
         expect(image).toHaveStyle({visibility: "hidden"});
+        const marker = screen.getByTestId("map-marker");
+        const markerSize = Number.parseFloat(marker.style.width);
+        const imageTop = Number.parseFloat((image as HTMLImageElement).style.top);
+        expect(imageTop + 0.77 * markerSize).toBeCloseTo(markerSize / 2);
         fireEvent.error(image);
 
         await waitFor(() => expect(onError).toHaveBeenCalledOnce());
