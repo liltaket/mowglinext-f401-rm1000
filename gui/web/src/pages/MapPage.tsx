@@ -118,8 +118,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const mowerHeadingFeature = features["mower-heading"];
     const handleMowerAppearanceChange = (id: MowerAppearanceId) => {
         setLoadedMowerImageSrc(undefined);
-        setLoadedDockImageSrc(undefined);
         const dockAppearanceReset = getDockAppearanceResetForMowerChange(dockAppearance, id);
+        if (dockAppearanceReset) setLoadedDockImageSrc(undefined);
         void setConfig({
             "gui.map.mower.appearance": id,
             ...(dockAppearanceReset ? {"gui.map.dock.appearance": dockAppearanceReset} : {}),
