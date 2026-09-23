@@ -22,10 +22,9 @@ export interface MowerAppearance {
     id: MowerAppearanceId;
     labelKey: string;
     mowerImage?: MapImageAppearance;
-    dockImage?: MapImageAppearance;
 }
 
-export type DockAppearanceId = "marker" | "generic" | "biltema-rm1000";
+export type DockAppearanceId = "marker" | "biltema-rm1000" | "biltema-rm1000-clean";
 
 export interface DockAppearance {
     id: DockAppearanceId;
@@ -48,7 +47,15 @@ export const MOWER_APPEARANCES: Record<MowerAppearanceId, MowerAppearance> = {
             // is near the rear axle, not at the visual center of the body.
             poseAnchor: {x: 0.5, y: 0.77},
         },
-        dockImage: {
+    },
+};
+
+export const DOCK_APPEARANCES: Record<DockAppearanceId, DockAppearance> = {
+    marker: {id: "marker", labelKey: "mapToolbar.dockAppearanceMarker"},
+    "biltema-rm1000": {
+        id: "biltema-rm1000",
+        labelKey: "mapToolbar.dockAppearanceBiltemaRm1000",
+        image: {
             src: "/assets/robots/biltema-rm1000/dock.webp",
             altKey: "mapToolbar.dockAppearanceBiltemaRm1000Alt",
             visibleLengthM: 0.63,
@@ -58,17 +65,14 @@ export const MOWER_APPEARANCES: Record<MowerAppearanceId, MowerAppearance> = {
             // The image top edge follows dock-local +X; pose sits at x=0.
             poseAnchor: {x: 0.5, y: 0.024},
         },
+        onlyForMowerAppearance: "biltema-rm1000",
     },
-};
-
-export const DOCK_APPEARANCES: Record<DockAppearanceId, DockAppearance> = {
-    marker: {id: "marker", labelKey: "mapToolbar.dockAppearanceMarker"},
-    generic: {
-        id: "generic",
-        labelKey: "mapToolbar.dockAppearanceGeneric",
+    "biltema-rm1000-clean": {
+        id: "biltema-rm1000-clean",
+        labelKey: "mapToolbar.dockAppearanceBiltemaRm1000Clean",
         image: {
-            src: "/assets/robots/generic/dock.webp",
-            altKey: "mapToolbar.dockAppearanceGenericAlt",
+            src: "/assets/robots/biltema-rm1000/dock-clean.webp",
+            altKey: "mapToolbar.dockAppearanceBiltemaRm1000CleanAlt",
             visibleLengthM: 0.63,
             visibleLengthFraction: 0.951,
             visibleWidthM: 0.46,
@@ -76,11 +80,6 @@ export const DOCK_APPEARANCES: Record<DockAppearanceId, DockAppearance> = {
             // The image top edge follows dock-local +X; pose sits at x=0.
             poseAnchor: {x: 0.5, y: 0.02},
         },
-    },
-    "biltema-rm1000": {
-        id: "biltema-rm1000",
-        labelKey: "mapToolbar.dockAppearanceBiltemaRm1000",
-        image: MOWER_APPEARANCES["biltema-rm1000"].dockImage,
         onlyForMowerAppearance: "biltema-rm1000",
     },
 };
@@ -91,7 +90,7 @@ export function getAvailableDockAppearances(mowerAppearanceId: MowerAppearanceId
 }
 
 export function resolveDockAppearance(value: unknown, mowerAppearanceId: MowerAppearanceId): DockAppearance {
-    if (value !== "generic" && value !== "biltema-rm1000") return DOCK_APPEARANCES.marker;
+    if (value !== "biltema-rm1000" && value !== "biltema-rm1000-clean") return DOCK_APPEARANCES.marker;
     const appearance = DOCK_APPEARANCES[value];
     if (appearance.onlyForMowerAppearance && appearance.onlyForMowerAppearance !== mowerAppearanceId) {
         return DOCK_APPEARANCES.marker;

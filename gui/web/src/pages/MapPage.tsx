@@ -39,6 +39,7 @@ import {extractObstacleProposals, isDigProposal} from "./map/utils/obstaclePropo
 import {MapOffsetPanel} from "./map/components/MapOffsetPanel.tsx";
 import {MapImageMarker} from "./map/components/MapImageMarker.tsx";
 import {getMowerHeadingRad, hasValidMapPosition} from "./map/components/mapImageMarkerMath.ts";
+import {buildMapDisplayFeatures} from "./map/mapDisplayFeatures.ts";
 import {MapToolbar} from "./map/components/MapToolbar.tsx";
 import {MapToolbarMobile} from "./map/components/MapToolbarMobile.tsx";
 import {MapEditorToolbar} from "./map/components/MapEditorToolbar.tsx";
@@ -118,7 +119,10 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const handleMowerAppearanceChange = (id: MowerAppearanceId) => {
         setLoadedMowerImageSrc(undefined);
         setLoadedDockImageSrc(undefined);
-        void setConfig({"gui.map.mower.appearance": id});
+        void setConfig({
+            "gui.map.mower.appearance": id,
+            ...(id === "biltema-rm1000" ? {} : {"gui.map.dock.appearance": "marker"}),
+        });
     };
     const handleDockAppearanceChange = (id: DockAppearanceId) => {
         setLoadedDockImageSrc(undefined);
@@ -207,37 +211,18 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     );
 
     // Display-only features (mower, dock, heading, paths) rendered as separate layers
-    const displayFeatures = useMemo<GeoJSON.FeatureCollection>(() => {
-        const feats = Object.values(features)
-            .filter(f => !(f instanceof MowingFeatureBase))
-            .filter(f => !mowerImageReady || (
-                f.id !== "mower" && f.id !== "mower-heading" &&
-                f.properties.feature_type !== "mower-footprint"
-            ))
-            .filter(f => !dockImageReady || (f.id !== "dock" && f.id !== "dock-heading"))
-            .map(f => ({
-                type: "Feature" as const,
-                id: f.id,
-                geometry: f.geometry,
-                properties: f.properties,
-            }));
-
-        // Add dock heading direction line (longer, with contrasting color)
-        const dock = features["dock"];
-        if (dock instanceof DockFeatureBase) {
+    const displayFeatures = useMemo(() => buildMapDisplayFeatures(
+        features,
+        mowerImageReady,
+        dockImageReady,
+        (dock) => {
             const coords = dock.getCoordinates();
             const rosCoords = datum[0] !== 0 ? itranspose(offsetX, offsetY, datum, coords[1], coords[0]) : [0, 0];
             const endPoint = drawLine(offsetX, offsetY, datum, rosCoords[1], rosCoords[0], dock.getHeading());
-            feats.push({
-                type: "Feature" as const,
-                id: "dock-heading",
-                geometry: {type: "LineString", coordinates: [coords, endPoint]},
-                properties: {color: LAYER_COLORS.dockHeading, width: 3, feature_type: "dock-heading"},
-            });
-        }
-
-        return {type: "FeatureCollection", features: feats};
-    }, [features, offsetX, offsetY, datum, LAYER_COLORS, mowerImageReady, dockImageReady]);
+            return {type: "LineString", coordinates: [coords, endPoint]};
+        },
+        LAYER_COLORS.dockHeading,
+    ), [features, offsetX, offsetY, datum, LAYER_COLORS, mowerImageReady, dockImageReady]);
 
     // Layers for the persistent tracked-obstacle polygons (feature_type
     // 'dyn-obstacle', carried in the same display-features source). Rendered as

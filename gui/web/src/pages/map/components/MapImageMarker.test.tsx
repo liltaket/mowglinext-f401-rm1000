@@ -43,8 +43,8 @@ const image: MapImageAppearance = {
 };
 
 const dockImage: MapImageAppearance = {
-    src: "/assets/robots/generic/dock.webp",
-    altKey: "mapToolbar.dockAppearanceGenericAlt",
+    src: "/assets/robots/biltema-rm1000/dock-clean.webp",
+    altKey: "mapToolbar.dockAppearanceBiltemaRm1000CleanAlt",
     visibleLengthM: 0.63,
     visibleLengthFraction: 0.951,
     visibleWidthM: 0.46,
@@ -105,13 +105,13 @@ describe("MapImageMarker", () => {
 
     it("uses separate calibrated dock width and length without moving its pose anchor", () => {
         render(
-            <MapImageMarker image={dockImage} alt="Generic docking station"
+            <MapImageMarker image={dockImage} alt="RM1000 docking station without sticker"
                 longitude={18.06} latitude={59.33} headingRad={0} onLoad={vi.fn()} onError={vi.fn()} />,
         );
         const marker = screen.getByTestId("map-marker");
         const width = Number.parseFloat(marker.style.width);
         const height = Number.parseFloat(marker.style.height);
-        const imageElement = screen.getByAltText("Generic docking station");
+        const imageElement = screen.getByAltText("RM1000 docking station without sticker");
         const imageOffsetTop = Number.parseFloat(imageElement.style.top);
         expect(width / height).toBeCloseTo((0.46 / 0.678) / (0.63 / 0.951), 3);
         expect(imageOffsetTop + 0.02 * height).toBeCloseTo(height / 2);

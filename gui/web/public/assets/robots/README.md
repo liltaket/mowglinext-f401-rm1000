@@ -1,10 +1,9 @@
 # Map robot images
 
 Store bundled, display-only robot images under `gui/web/public/assets/robots/`.
-Use a product directory for model-specific images and `generic/` for a
-contributor-provided image explicitly intended for all models. Hardware preset
-names are not proof of shell identity; add an appearance mapping only when that
-identity is explicit.
+Use product directories for model-specific images. Hardware preset names are
+not proof of shell identity; add an appearance mapping only when that identity
+is explicit.
 
 Prepare each image as a near-square transparent PNG or WebP at a resolution
 appropriate for the visible map size. Use a true top-down view with the mower's
@@ -24,17 +23,13 @@ alignment as calibrated.
 For dock images, the top edge points along dock-local +X (out toward the staging
 area). The map server places the dock body from `-dock_body_length` to the dock
 pose at `x=0`, so the top-center image anchor maps to that pose; it is calibrated
-to the image's top edge, not to a generic keepout rectangle. The RM1000-labeled
-image includes a support sticker and is only offered for the RM1000 appearance.
-The generic image omits that sticker and may be selected for any mower. The
-existing dock marker remains the default and fallback. Both assets use the
-published RM1000 charging-station dimensions above, so another station should
-only use the generic image when those dimensions are representative.
+to the image's top edge, not to a generic keepout rectangle. Both dock images
+show the RM1000 charging station, with and without its support sticker, and are
+only offered for the RM1000 appearance. The existing dock marker remains the
+default and fallback.
 
-The mower image originates from a contributor-taken photograph edited with
-AI-assisted tools and is intentionally contributed under this repository's
-licensing terms. The two dock images are also the contributor's photographs,
-cleaned up with AI-assisted tools; the contributor explicitly authorizes their
-use for any purpose. Keep the existing drawn footprint and dock marker as
-runtime fallbacks whenever an image or valid pose is missing or an image cannot
-be decoded.
+The mower and dock images originate from photographs taken by the contributor,
+edited with AI-assisted tools and intentionally contributed under this
+repository's licensing terms. Keep the existing drawn footprint and dock
+marker as runtime fallbacks whenever an image or valid pose is missing or an
+image cannot be decoded.

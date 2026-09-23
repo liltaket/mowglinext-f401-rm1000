@@ -26,19 +26,24 @@ describe("mower appearance registry", () => {
     });
 
     it("keeps the existing dock marker as the default and restricts the Biltema dock to that mower appearance", () => {
-        expect(getAvailableDockAppearances("urdf").map(({id}) => id)).toEqual(["marker", "generic"]);
-        expect(getAvailableDockAppearances("biltema-rm1000").map(({id}) => id)).toEqual(["marker", "generic", "biltema-rm1000"]);
+        expect(getAvailableDockAppearances("urdf").map(({id}) => id)).toEqual(["marker"]);
+        expect(getAvailableDockAppearances("biltema-rm1000").map(({id}) => id)).toEqual([
+            "marker", "biltema-rm1000", "biltema-rm1000-clean",
+        ]);
         expect(resolveDockAppearance(undefined, "urdf").id).toBe("marker");
         expect(resolveDockAppearance("stale", "biltema-rm1000").id).toBe("marker");
         expect(resolveDockAppearance("biltema-rm1000", "urdf").id).toBe("marker");
+        expect(resolveDockAppearance("generic", "urdf").id).toBe("marker");
+        expect(resolveDockAppearance("biltema-rm1000", "urdf").id).toBe("marker");
+        expect(resolveDockAppearance("biltema-rm1000-clean", "urdf").id).toBe("marker");
         expect(resolveDockAppearance("biltema-rm1000", "biltema-rm1000").image?.src)
             .toBe("/assets/robots/biltema-rm1000/dock.webp");
-        expect(resolveDockAppearance("generic", "urdf").image?.src).toBe("/assets/robots/generic/dock.webp");
-        expect(resolveDockAppearance("generic", "biltema-rm1000").image?.src).toBe("/assets/robots/generic/dock.webp");
+        expect(resolveDockAppearance("biltema-rm1000-clean", "biltema-rm1000").image?.src)
+            .toBe("/assets/robots/biltema-rm1000/dock-clean.webp");
     });
 
     it("keeps the generic dock marker until the selected image is decoded with a valid pose and heading", () => {
-        const image = resolveDockAppearance("generic", "urdf").image;
+        const image = resolveDockAppearance("biltema-rm1000-clean", "biltema-rm1000").image;
         expect(shouldDisplayMapImage(image, undefined, true, true)).toBe(false);
         expect(shouldDisplayMapImage(image, image?.src, false, true)).toBe(false);
         expect(shouldDisplayMapImage(image, image?.src, true, false)).toBe(false);
