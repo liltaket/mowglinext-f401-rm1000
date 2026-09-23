@@ -10,13 +10,13 @@ const CENTER: [number, number] = [-122.4194, 37.7749];
 const STYLE = {version: 8 as const, sources: {}, layers: []};
 mapboxgl.accessToken = "pk.test-no-network-token";
 const IMAGE = MOWER_APPEARANCES["biltema-rm1000"].mowerImage!;
-const DOCK_IMAGE = DOCK_APPEARANCES["biltema-rm1000"].image!;
 
 declare global {
     interface Window {
         mapImageMarkerTest?: {
             map: mapboxgl.Map;
             setHeading: (headingRad: number) => void;
+            setDockAppearance: (appearanceId: "generic" | "biltema-rm1000") => void;
         };
     }
 }
@@ -24,20 +24,24 @@ declare global {
 function MarkerFixture() {
     const {current: map} = useMap();
     const [heading, setHeading] = useState(0);
+    const [dockAppearanceId, setDockAppearance] = useState<"generic" | "biltema-rm1000">("biltema-rm1000");
+    const dockImage = DOCK_APPEARANCES[dockAppearanceId].image!;
     if (map && !window.mapImageMarkerTest) {
-        window.mapImageMarkerTest = {map, setHeading};
-    } else if (map && window.mapImageMarkerTest?.setHeading !== setHeading) {
-        window.mapImageMarkerTest = {map, setHeading};
+        window.mapImageMarkerTest = {map, setHeading, setDockAppearance};
+    } else if (map && (window.mapImageMarkerTest?.setHeading !== setHeading ||
+        window.mapImageMarkerTest?.setDockAppearance !== setDockAppearance)) {
+        window.mapImageMarkerTest = {map, setHeading, setDockAppearance};
     }
 
     return (
         <>
             <MapImageMarker
-                image={DOCK_IMAGE}
+                image={dockImage}
                 alt="RM1000 dock test image"
                 longitude={CENTER[0]}
                 latitude={CENTER[1]}
                 headingRad={heading}
+                zIndex={998}
                 onLoad={() => {}}
                 onError={() => {}}
             />
@@ -47,11 +51,12 @@ function MarkerFixture() {
                 longitude={CENTER[0]}
                 latitude={CENTER[1]}
                 headingRad={heading}
+                zIndex={999}
                 onLoad={() => {}}
                 onError={() => {}}
             />
             <MapImageMarker
-                image={DOCK_IMAGE}
+                image={dockImage}
                 alt=""
                 longitude={CENTER[0]}
                 latitude={CENTER[1]}

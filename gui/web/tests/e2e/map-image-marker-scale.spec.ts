@@ -13,8 +13,10 @@ test("mower and dock images retain their map pose across bearing, pitch, and hea
     await expect(dockImage).toBeVisible();
     await expect(dockForegroundImage).toBeVisible();
     await expect(dockForegroundImage).toHaveCSS("clip-path", "polygon(43% 78%, 57% 78%, 68% 83%, 68% 92%, 59% 96%, 41% 96%, 32% 92%, 32% 83%)");
+    const dockZIndex = await dockImage.evaluate((element) => Number(element.closest(".mapboxgl-marker")?.style.zIndex));
     const mowerZIndex = await image.evaluate((element) => Number(element.closest(".mapboxgl-marker")?.style.zIndex));
     const dockForegroundZIndex = await dockForegroundImage.evaluate((element) => Number(element.closest(".mapboxgl-marker")?.style.zIndex));
+    expect(dockZIndex).toBeLessThan(mowerZIndex);
     expect(dockForegroundZIndex).toBeGreaterThan(mowerZIndex);
 
     const dockAnchor = await dockImage.evaluate((element) => {
@@ -104,4 +106,16 @@ test("mower and dock images retain their map pose across bearing, pitch, and hea
     });
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await page.screenshot({path: "tests/e2e/.artifacts/docked-mower-and-station.png", animations: "disabled"});
+
+    for (const appearanceId of ["generic", "biltema-rm1000"] as const) {
+        await page.evaluate((id) => window.mapImageMarkerTest!.setDockAppearance(id), appearanceId);
+        await expect(dockImage).toBeVisible();
+        const layerZIndexes = await page.evaluate(() => [
+            ...Array.from(document.querySelectorAll("img[alt='RM1000 dock test image']")),
+            document.querySelector(".mapboxgl-marker img[alt='RM1000 mower test image']")!,
+            document.querySelector(".mapboxgl-marker img[style*='clip-path']")!,
+        ].map((element) => Number(element.closest(".mapboxgl-marker")?.style.zIndex)));
+        expect(layerZIndexes[0]).toBeLessThan(layerZIndexes[1]);
+        expect(layerZIndexes[1]).toBeLessThan(layerZIndexes[2]);
+    }
 });

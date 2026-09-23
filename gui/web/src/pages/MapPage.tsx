@@ -53,6 +53,10 @@ import {useThemeMode} from "../theme/ThemeContext.tsx";
 // (blank) map, so the misconfiguration is obvious rather than silent.
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined || "pk.eyJ1IjoiY2VkYm9zc25lbyIsImEiOiJjbGxldjB4aDEwOW5vM3BxamkxeWRwb2VoIn0.WOccbQZZyO1qfAgNxnHAnA";
 
+// Stable ordering is required because Mapbox mounts image markers as their
+// selected assets change: dock base < mower < dock tongue foreground.
+const MAP_IMAGE_LAYER_Z_INDEX = {dockBase: 998, mower: 999, dockForeground: 1000} as const;
+
 // Layers the full map queries on hover to drive the two-way obstacle
 // highlight (map polygon → panel row). Module-level so the array identity is
 // stable across renders and react-map-gl does not re-bind the query on every
@@ -286,6 +290,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             longitude={mowerFeature.geometry.coordinates[0]}
             latitude={mowerFeature.geometry.coordinates[1]}
             headingRad={mowerHeadingRad}
+            zIndex={MAP_IMAGE_LAYER_Z_INDEX.mower}
             onLoad={() => setLoadedMowerImageSrc(mowerImage.src)}
             onError={() => setLoadedMowerImageSrc(undefined)}
         />
@@ -297,6 +302,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             longitude={dockFeature.geometry.coordinates[0]}
             latitude={dockFeature.geometry.coordinates[1]}
             headingRad={dockHeadingRad}
+            zIndex={MAP_IMAGE_LAYER_Z_INDEX.dockBase}
             onLoad={() => setLoadedDockImageSrc(dockImage.src)}
             onError={() => setLoadedDockImageSrc(undefined)}
         />
@@ -310,7 +316,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             latitude={dockFeature.geometry.coordinates[1]}
             headingRad={dockHeadingRad}
             clipPath={dockAppearance.foregroundClipPath}
-            zIndex={1000}
+            zIndex={MAP_IMAGE_LAYER_Z_INDEX.dockForeground}
             onLoad={() => {}}
             onError={() => {}}
         />
