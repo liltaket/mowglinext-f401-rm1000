@@ -16,6 +16,8 @@ export interface MapImageAppearance {
     visibleWidthFraction?: number;
     /** Pose location in normalized source-image coordinates (0..1). */
     poseAnchor: {x: number; y: number};
+    /** Visual correction from the tracked object's heading to this image's forward axis. */
+    headingOffsetRad?: number;
 }
 
 export interface MowerAppearance {
@@ -64,8 +66,11 @@ export const DOCK_APPEARANCES: Record<DockAppearanceId, DockAppearance> = {
             visibleLengthFraction: 0.951,
             visibleWidthM: 0.46,
             visibleWidthFraction: 0.678,
-            // The image top edge follows dock-local +X; pose sits at x=0.
-            poseAnchor: {x: 0.5, y: 0.02},
+            // Dock pose is captured from the mower while charging. The contact
+            // pins line up near y=.76; the station extends behind the mower,
+            // opposite its stored heading.
+            poseAnchor: {x: 0.5, y: 0.76},
+            headingOffsetRad: Math.PI,
         },
     },
     "biltema-rm1000": {
@@ -78,8 +83,11 @@ export const DOCK_APPEARANCES: Record<DockAppearanceId, DockAppearance> = {
             visibleLengthFraction: 0.944,
             visibleWidthM: 0.46,
             visibleWidthFraction: 0.667,
-            // The image top edge follows dock-local +X; pose sits at x=0.
-            poseAnchor: {x: 0.5, y: 0.024},
+            // Dock pose is captured from the mower while charging. The contact
+            // pins line up near y=.76; the station extends behind the mower,
+            // opposite its stored heading.
+            poseAnchor: {x: 0.5, y: 0.76},
+            headingOffsetRad: Math.PI,
         },
         onlyForMowerAppearance: "biltema-rm1000",
     },

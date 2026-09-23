@@ -39,6 +39,13 @@ describe("mower appearance registry", () => {
             .toBe("/assets/robots/biltema-rm1000/dock.webp");
     });
 
+    it("anchors both dock images on their charging contacts and reverses them from mower heading", () => {
+        for (const id of ["generic", "biltema-rm1000"] as const) {
+            expect(DOCK_APPEARANCES[id].image?.poseAnchor).toEqual({x: 0.5, y: 0.76});
+            expect(DOCK_APPEARANCES[id].image?.headingOffsetRad).toBe(Math.PI);
+        }
+    });
+
     it("resets only an incompatible RM1000 dock selection when the mower changes", () => {
         expect(getDockAppearanceResetForMowerChange(DOCK_APPEARANCES["biltema-rm1000"], "urdf")).toBe("marker");
         expect(getDockAppearanceResetForMowerChange(DOCK_APPEARANCES.generic, "urdf")).toBeUndefined();

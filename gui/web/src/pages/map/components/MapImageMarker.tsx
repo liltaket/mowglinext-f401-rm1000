@@ -80,7 +80,7 @@ function MapImageMarkerForSource({
             longitude={longitude}
             latitude={latitude}
             anchor="center"
-            rotation={rosHeadingToMapboxRotation(headingRad)}
+            rotation={rosHeadingToMapboxRotation(headingRad + (image.headingOffsetRad ?? 0))}
             rotationAlignment="map"
             pitchAlignment="map"
             style={{width: assetSizePx.width, height: assetSizePx.height, pointerEvents: "none"}}

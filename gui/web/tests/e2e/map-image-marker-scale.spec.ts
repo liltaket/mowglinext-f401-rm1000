@@ -2,12 +2,25 @@ import {expect, test} from "@playwright/test";
 
 const MAX_PROJECTED_ERROR_PX = 3;
 
-test("mower image follows projected map geometry across bearing, pitch, and heading", async ({page}) => {
+test("mower and dock images retain their map pose across bearing, pitch, and heading", async ({page}) => {
     await page.route("https://api.mapbox.com/**", (route) => route.fulfill({status: 200, contentType: "application/json", body: "{}"}));
     await page.goto("/tests/e2e/fixtures/map-image-marker.html");
     await page.waitForFunction(() => Boolean(window.mapImageMarkerTest));
     const image = page.locator("img[alt='RM1000 mower test image']");
+    const dockImage = page.locator("img[alt='RM1000 dock test image']");
     await expect(image).toBeVisible();
+    await expect(dockImage).toBeVisible();
+
+    const dockAnchor = await dockImage.evaluate((element) => {
+        const marker = element.closest(".mapboxgl-marker")!;
+        const imageLeft = Number.parseFloat((element as HTMLImageElement).style.left);
+        const imageTop = Number.parseFloat((element as HTMLImageElement).style.top);
+        const width = Number.parseFloat(marker.style.width);
+        const height = Number.parseFloat(marker.style.height);
+        return {x: (imageLeft + width * 0.5) / width, y: (imageTop + height * 0.76) / height};
+    });
+    expect(dockAnchor.x).toBeCloseTo(0.5);
+    expect(dockAnchor.y).toBeCloseTo(0.5);
 
     const results = await page.evaluate(async () => {
         const testHarness = window.mapImageMarkerTest!;
@@ -73,4 +86,11 @@ test("mower image follows projected map geometry across bearing, pitch, and head
         expect(point.error, `bearing=${point.bearing}, pitch=${point.pitch}, heading=${point.heading}`)
             .toBeLessThan(MAX_PROJECTED_ERROR_PX);
     }
+
+    await page.evaluate(() => {
+        window.mapImageMarkerTest!.setHeading(0);
+        window.mapImageMarkerTest!.map.jumpTo({bearing: 0, pitch: 0, zoom: 25});
+    });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await page.screenshot({path: "tests/e2e/.artifacts/docked-mower-and-station.png", animations: "disabled"});
 });

@@ -49,7 +49,8 @@ const dockImage: MapImageAppearance = {
     visibleLengthFraction: 0.951,
     visibleWidthM: 0.46,
     visibleWidthFraction: 0.678,
-    poseAnchor: {x: 0.5, y: 0.02},
+    poseAnchor: {x: 0.5, y: 0.76},
+    headingOffsetRad: Math.PI,
 };
 
 function renderMarker(src = image.src, headingRad = 0, callbacks = {onLoad: vi.fn(), onError: vi.fn()}) {
@@ -114,7 +115,8 @@ describe("MapImageMarker", () => {
         const imageElement = screen.getByAltText("Generic visual dock approximation");
         const imageOffsetTop = Number.parseFloat(imageElement.style.top);
         expect(width / height).toBeCloseTo((0.46 / 0.678) / (0.63 / 0.951), 3);
-        expect(imageOffsetTop + 0.02 * height).toBeCloseTo(height / 2);
+        expect(imageOffsetTop + 0.76 * height).toBeCloseTo(height / 2);
+        expect(markerEvents[markerEvents.length - 1]?.rotation).toBe(-90);
     });
 
     it("keeps the image hidden until decode and reports the decoded source", async () => {
