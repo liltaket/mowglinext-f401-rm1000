@@ -5,6 +5,7 @@ import {
     getMapImageAnchorOffsetPx,
     getMowerHeadingRad,
     hasValidMapPosition,
+    offsetMapCoordinatesForward,
     rosHeadingToMapboxRotation,
 } from "./mapImageMarkerMath.ts";
 
@@ -40,6 +41,20 @@ describe("map image marker geometry", () => {
         expect(hasValidMapPosition([18.06, 59.33])).toBe(true);
         expect(hasValidMapPosition([181, 59.33])).toBe(false);
         expect(hasValidMapPosition([18, Number.NaN])).toBe(false);
+    });
+
+    it("offsets only the display coordinate along the ROS heading in local ENU", () => {
+        const east = offsetMapCoordinatesForward(18, 0, 0, 0.02)!;
+        expect(east[0]).toBeCloseTo(18 + (0.02 / 6_378_137) * 180 / Math.PI, 10);
+        expect(east[1]).toBe(0);
+
+        const north = offsetMapCoordinatesForward(18, 0, Math.PI / 2, 0.02)!;
+        expect(north[0]).toBeCloseTo(18, 10);
+        expect(north[1]).toBeCloseTo((0.02 / 6_378_137) * 180 / Math.PI, 10);
+
+        expect(offsetMapCoordinatesForward(18, 59.33, Math.PI, 0.02)![0]).toBeLessThan(18);
+        expect(offsetMapCoordinatesForward(18, 90, 0, 0.02)).toBeUndefined();
+        expect(offsetMapCoordinatesForward(18, 59.33, Number.NaN, 0.02)).toBeUndefined();
     });
 
     it("keeps the normalized pose anchor at the image center for every heading", () => {

@@ -8,8 +8,14 @@ test("mower and dock images retain their map pose across bearing, pitch, and hea
     await page.waitForFunction(() => Boolean(window.mapImageMarkerTest));
     const image = page.locator("img[alt='RM1000 mower test image']");
     const dockImage = page.locator("img[alt='RM1000 dock test image']");
+    const dockForegroundImage = page.locator(".mapboxgl-marker img[style*='clip-path']");
     await expect(image).toBeVisible();
     await expect(dockImage).toBeVisible();
+    await expect(dockForegroundImage).toBeVisible();
+    await expect(dockForegroundImage).toHaveCSS("clip-path", "polygon(43% 78%, 57% 78%, 68% 83%, 68% 92%, 59% 96%, 41% 96%, 32% 92%, 32% 83%)");
+    const mowerZIndex = await image.evaluate((element) => Number(element.closest(".mapboxgl-marker")?.style.zIndex));
+    const dockForegroundZIndex = await dockForegroundImage.evaluate((element) => Number(element.closest(".mapboxgl-marker")?.style.zIndex));
+    expect(dockForegroundZIndex).toBeGreaterThan(mowerZIndex);
 
     const dockAnchor = await dockImage.evaluate((element) => {
         const marker = element.closest(".mapboxgl-marker")!;
@@ -17,7 +23,7 @@ test("mower and dock images retain their map pose across bearing, pitch, and hea
         const imageTop = Number.parseFloat((element as HTMLImageElement).style.top);
         const width = Number.parseFloat(marker.style.width);
         const height = Number.parseFloat(marker.style.height);
-        return {x: (imageLeft + width * 0.5) / width, y: (imageTop + height * 0.76) / height};
+        return {x: (imageLeft + width * 0.5) / width, y: (imageTop + height * 0.16) / height};
     });
     expect(dockAnchor.x).toBeCloseTo(0.5);
     expect(dockAnchor.y).toBeCloseTo(0.5);
@@ -29,6 +35,7 @@ test("mower and dock images retain their map pose across bearing, pitch, and hea
         const sourceAnchor = {x: 0.5, y: 0.77};
         const imageLengthM = 0.57 / 0.9;
         const earthRadiusM = 6_378_137;
+        const displayOffsetM = 0.02;
         const center = map.getCenter();
         const states = [
             {bearing: 0, pitch: 0, heading: 0},
@@ -44,6 +51,10 @@ test("mower and dock images retain their map pose across bearing, pitch, and hea
             testHarness.setHeading(state.heading);
             await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
             const renderedBox = imageElement.getBoundingClientRect();
+            const mowerCenter = {
+                lng: center.lng + (displayOffsetM * Math.cos(state.heading) / (earthRadiusM * Math.cos(center.lat * Math.PI / 180))) * 180 / Math.PI,
+                lat: center.lat + (displayOffsetM * Math.sin(state.heading) / earthRadiusM) * 180 / Math.PI,
+            };
             const source = [
                 {x: 0, y: 0}, {x: 1, y: 0}, {x: 1, y: 1}, {x: 0, y: 1},
             ];
@@ -52,8 +63,8 @@ test("mower and dock images retain their map pose across bearing, pitch, and hea
                 const northM = (sourceAnchor.y - y) * imageLengthM;
                 const eastHeadingM = eastM * Math.cos(state.heading) - northM * Math.sin(state.heading);
                 const northHeadingM = eastM * Math.sin(state.heading) + northM * Math.cos(state.heading);
-                const lon = center.lng + (eastHeadingM / (earthRadiusM * Math.cos(center.lat * Math.PI / 180))) * 180 / Math.PI;
-                const lat = center.lat + (northHeadingM / earthRadiusM) * 180 / Math.PI;
+                const lon = mowerCenter.lng + (eastHeadingM / (earthRadiusM * Math.cos(mowerCenter.lat * Math.PI / 180))) * 180 / Math.PI;
+                const lat = mowerCenter.lat + (northHeadingM / earthRadiusM) * 180 / Math.PI;
                 const point = map.project([lon, lat]);
                 const canvas = map.getCanvas().getBoundingClientRect();
                 return {x: canvas.left + point.x, y: canvas.top + point.y};

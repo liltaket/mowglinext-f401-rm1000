@@ -1,10 +1,11 @@
 import {describe, expect, it} from "vitest";
-import {DOCK_APPEARANCES, getAvailableDockAppearances, getDockAppearanceResetForMowerChange, resolveDockAppearance, resolveMowerAppearance, shouldDisplayMapImage, shouldDisplayMowerImage} from "./mowerAppearances.ts";
+import {DOCK_APPEARANCES, DOCK_FOREGROUND_CLIP_PATH, getAvailableDockAppearances, getDockAppearanceResetForMowerChange, resolveDockAppearance, resolveMowerAppearance, shouldDisplayMapImage, shouldDisplayMowerImage} from "./mowerAppearances.ts";
 
 describe("mower appearance registry", () => {
     it("uses the bundled RM1000 image only after an explicit GUI appearance selection", () => {
         expect(resolveMowerAppearance("biltema-rm1000").mowerImage?.src)
             .toBe("/assets/robots/biltema-rm1000/mower.webp");
+        expect(resolveMowerAppearance("biltema-rm1000").mowerImage?.forwardOffsetM).toBe(0.02);
         expect(resolveMowerAppearance("YardForce500").mowerImage).toBeUndefined();
         expect(resolveMowerAppearance("YardForce500B").mowerImage).toBeUndefined();
     });
@@ -39,10 +40,11 @@ describe("mower appearance registry", () => {
             .toBe("/assets/robots/biltema-rm1000/dock.webp");
     });
 
-    it("anchors both dock images on their charging contacts and reverses them from mower heading", () => {
+    it("uses the reviewed dock overlap anchor and center-tongue foreground mask", () => {
         for (const id of ["generic", "biltema-rm1000"] as const) {
-            expect(DOCK_APPEARANCES[id].image?.poseAnchor).toEqual({x: 0.5, y: 0.76});
+            expect(DOCK_APPEARANCES[id].image?.poseAnchor).toEqual({x: 0.5, y: 0.16});
             expect(DOCK_APPEARANCES[id].image?.headingOffsetRad).toBe(Math.PI);
+            expect(DOCK_APPEARANCES[id].foregroundClipPath).toBe(DOCK_FOREGROUND_CLIP_PATH);
         }
     });
 

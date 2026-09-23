@@ -4,7 +4,7 @@ import {beforeEach, describe, expect, it, vi} from "vitest";
 import type {MapImageAppearance} from "../../../constants/mowerAppearances.ts";
 import {MapImageMarker} from "./MapImageMarker.tsx";
 
-const {testMap, markerEvents} = vi.hoisted(() => ({
+const {testMap, markerEvents, markerPositions} = vi.hoisted(() => ({
     testMap: {
         scale: 10,
         project: ([longitude, latitude]: [number, number]) => ({x: longitude * testMap.scale, y: latitude * testMap.scale}),
@@ -17,19 +17,23 @@ const {testMap, markerEvents} = vi.hoisted(() => ({
         off: vi.fn((event: string, handler: () => void) => testMap.handlers.get(event)?.delete(handler)),
     },
     markerEvents: [] as {rotation: number; rotationAlignment: string; pitchAlignment: string; anchor: string}[],
+    markerPositions: [] as Array<{longitude: number; latitude: number; style?: React.CSSProperties}>,
 }));
 
 vi.mock("react-map-gl/mapbox", () => ({
-    Marker: ({children, style, rotation, rotationAlignment, pitchAlignment, anchor}: {
+    Marker: ({children, style, rotation, rotationAlignment, pitchAlignment, anchor, longitude, latitude}: {
         children: React.ReactNode;
         style?: React.CSSProperties;
         rotation: number;
         rotationAlignment: string;
         pitchAlignment: string;
         anchor: string;
+        longitude: number;
+        latitude: number;
     }) => {
         markerEvents.push({rotation, rotationAlignment, pitchAlignment, anchor});
-        return <div data-testid="map-marker" style={style}>{children}</div>;
+        markerPositions.push({longitude, latitude, style});
+        return <div data-testid="map-marker" data-longitude={longitude} data-latitude={latitude} style={style}>{children}</div>;
     },
     useMap: () => ({current: testMap}),
 }));
@@ -49,7 +53,7 @@ const dockImage: MapImageAppearance = {
     visibleLengthFraction: 0.951,
     visibleWidthM: 0.46,
     visibleWidthFraction: 0.678,
-    poseAnchor: {x: 0.5, y: 0.76},
+    poseAnchor: {x: 0.5, y: 0.16},
     headingOffsetRad: Math.PI,
 };
 
@@ -72,6 +76,7 @@ describe("MapImageMarker", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         markerEvents.length = 0;
+        markerPositions.length = 0;
         testMap.handlers.clear();
         testMap.scale = 10;
         Object.defineProperty(HTMLImageElement.prototype, "decode", {
@@ -115,8 +120,24 @@ describe("MapImageMarker", () => {
         const imageElement = screen.getByAltText("Generic visual dock approximation");
         const imageOffsetTop = Number.parseFloat(imageElement.style.top);
         expect(width / height).toBeCloseTo((0.46 / 0.678) / (0.63 / 0.951), 3);
-        expect(imageOffsetTop + 0.76 * height).toBeCloseTo(height / 2);
+        expect(imageOffsetTop + 0.16 * height).toBeCloseTo(height / 2);
         expect(markerEvents[markerEvents.length - 1]?.rotation).toBe(-90);
+    });
+
+    it("applies an optional forward display offset and foreground clip without changing the source pose", () => {
+        const clipped = "polygon(43% 78%, 57% 78%, 68% 83%, 68% 92%, 59% 96%, 41% 96%, 32% 92%, 32% 83%)";
+        render(
+            <MapImageMarker image={{...dockImage, forwardOffsetM: 0.02}} alt="Dock foreground"
+                longitude={18.06} latitude={59.33} headingRad={Math.PI / 2} clipPath={clipped} zIndex={1000}
+                onLoad={vi.fn()} onError={vi.fn()} />,
+        );
+        const marker = screen.getByTestId("map-marker");
+        const imageElement = screen.getByAltText("Dock foreground");
+        expect(Number(marker.getAttribute("data-longitude"))).toBeCloseTo(18.06, 6);
+        expect(Number(marker.getAttribute("data-latitude"))).toBeGreaterThan(59.33);
+        expect(marker.style.zIndex).toBe("1000");
+        expect(imageElement.style.clipPath).toBe(clipped);
+        expect(markerPositions[0]?.longitude).toBe(Number(marker.getAttribute("data-longitude")));
     });
 
     it("keeps the image hidden until decode and reports the decoded source", async () => {

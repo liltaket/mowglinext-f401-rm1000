@@ -32,6 +32,33 @@ export function hasValidMapPosition(coordinates: readonly number[]): boolean {
         Number.isFinite(latitude) && latitude >= -90 && latitude <= 90;
 }
 
+/** Shift a display marker a short distance along ROS ENU yaw without changing
+ * the tracked pose data. Distances are intended for image alignment only.
+ */
+export function offsetMapCoordinatesForward(
+    longitude: number,
+    latitude: number,
+    headingRad: number,
+    offsetM: number,
+): [number, number] | undefined {
+    if (
+        !hasValidMapPosition([longitude, latitude]) ||
+        !Number.isFinite(headingRad) ||
+        !Number.isFinite(offsetM)
+    ) return undefined;
+
+    const cosLatitude = Math.cos(latitude * Math.PI / 180);
+    if (Math.abs(cosLatitude) < MIN_COS_LATITUDE) return undefined;
+
+    const eastM = offsetM * Math.cos(headingRad);
+    const northM = offsetM * Math.sin(headingRad);
+    const shiftedLongitude = longitude + eastM / (EARTH_RADIUS_M * cosLatitude) * (180 / Math.PI);
+    const shiftedLatitude = latitude + northM / EARTH_RADIUS_M * (180 / Math.PI);
+    return hasValidMapPosition([shiftedLongitude, shiftedLatitude])
+        ? [shiftedLongitude, shiftedLatitude]
+        : undefined;
+}
+
 const EARTH_RADIUS_M = 6_378_137;
 const SCALE_PROBE_M = 0.5;
 const MIN_COS_LATITUDE = 1e-6;

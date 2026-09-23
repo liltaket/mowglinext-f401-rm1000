@@ -301,6 +301,20 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             onError={() => setLoadedDockImageSrc(undefined)}
         />
         : null;
+    const dockForegroundMarker = dockImage && dockAppearance.foregroundClipPath &&
+        dockFeature instanceof DockFeatureBase && dockHasValidPose && dockHeadingRad !== undefined
+        ? <MapImageMarker
+            image={dockImage}
+            alt=""
+            longitude={dockFeature.geometry.coordinates[0]}
+            latitude={dockFeature.geometry.coordinates[1]}
+            headingRad={dockHeadingRad}
+            clipPath={dockAppearance.foregroundClipPath}
+            zIndex={1000}
+            onLoad={() => {}}
+            onError={() => {}}
+        />
+        : null;
 
     // Compute map bounds for the Mapbox viewport — depends on map data for centering
     const [map_ne, map_sw] = useMemo<[[number, number], [number, number]]>(() => {
@@ -967,6 +981,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     </Source>
                     {dockImageMarker}
                     {mowerImageMarker}
+                    {dockForegroundMarker}
                 </Map> : <Spinner/>}
             </div>
         );
@@ -1128,6 +1143,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     </Source>
                     {dockImageMarker}
                     {mowerImageMarker}
+                    {dockForegroundMarker}
                     {/* PENDING obstacle proposals (dig reports): dashed, never a real keepout */}
                     {renderProposalLayers()}
                     {/* fusion_graph's LiDAR anchor map (walls as ink, scanned ground as a faint wash). */}

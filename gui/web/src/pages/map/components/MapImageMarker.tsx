@@ -1,7 +1,12 @@
 import {useEffect, useRef, useState} from "react";
 import {Marker, useMap} from "react-map-gl/mapbox";
 import type {MapImageAppearance} from "../../../constants/mowerAppearances.ts";
-import {calculateMapImageDimensionsPx, getMapImageAnchorOffsetPx, rosHeadingToMapboxRotation} from "./mapImageMarkerMath.ts";
+import {
+    calculateMapImageDimensionsPx,
+    getMapImageAnchorOffsetPx,
+    offsetMapCoordinatesForward,
+    rosHeadingToMapboxRotation,
+} from "./mapImageMarkerMath.ts";
 
 interface MapImageMarkerProps {
     image: MapImageAppearance;
@@ -9,6 +14,8 @@ interface MapImageMarkerProps {
     longitude: number;
     latitude: number;
     headingRad: number;
+    clipPath?: string;
+    zIndex?: number;
     onLoad: () => void;
     onError: () => void;
 }
@@ -23,9 +30,17 @@ export function MapImageMarker(props: MapImageMarkerProps) {
 }
 
 function MapImageMarkerForSource({
-    image, alt, longitude, latitude, headingRad, onLoad, onError,
+    image, alt, longitude, latitude, headingRad, clipPath, zIndex, onLoad, onError,
 }: MapImageMarkerProps) {
     const {current: map} = useMap();
+    const markerCoordinates = offsetMapCoordinatesForward(
+        longitude,
+        latitude,
+        headingRad,
+        image.forwardOffsetM ?? 0,
+    );
+    const markerLongitude = markerCoordinates?.[0];
+    const markerLatitude = markerCoordinates?.[1];
     const [assetSizePx, setAssetSizePx] = useState<{width: number; height: number}>();
     const [decoded, setDecoded] = useState(false);
     const [loadFailed, setLoadFailed] = useState(false);
@@ -48,13 +63,13 @@ function MapImageMarkerForSource({
     };
 
     useEffect(() => {
-        if (!map || !Number.isFinite(longitude) || !Number.isFinite(latitude)) return;
+        if (!map || markerLongitude === undefined || markerLatitude === undefined) return;
 
         const updateSize = () => {
             const size = calculateMapImageDimensionsPx(
                 (coordinate) => map.project(coordinate),
-                longitude,
-                latitude,
+                markerLongitude,
+                markerLatitude,
                 image.visibleLengthM,
                 image.visibleLengthFraction,
                 image.visibleWidthM,
@@ -70,20 +85,25 @@ function MapImageMarkerForSource({
             map.off("move", updateSize);
             map.off("resize", updateSize);
         };
-    }, [map, longitude, latitude, image.visibleLengthM, image.visibleLengthFraction, image.visibleWidthM, image.visibleWidthFraction]);
+    }, [map, markerLongitude, markerLatitude, image.visibleLengthM, image.visibleLengthFraction, image.visibleWidthM, image.visibleWidthFraction]);
 
-    if (!assetSizePx || loadFailed) return null;
+    if (markerLongitude === undefined || markerLatitude === undefined || !assetSizePx || loadFailed) return null;
     const imageOffset = getMapImageAnchorOffsetPx(assetSizePx.width, assetSizePx.height, image.poseAnchor);
 
     return (
         <Marker
-            longitude={longitude}
-            latitude={latitude}
+            longitude={markerLongitude}
+            latitude={markerLatitude}
             anchor="center"
             rotation={rosHeadingToMapboxRotation(headingRad + (image.headingOffsetRad ?? 0))}
             rotationAlignment="map"
             pitchAlignment="map"
-            style={{width: assetSizePx.width, height: assetSizePx.height, pointerEvents: "none"}}
+            style={{
+                width: assetSizePx.width,
+                height: assetSizePx.height,
+                pointerEvents: "none",
+                ...(zIndex === undefined ? {} : {zIndex}),
+            }}
         >
             <img
                 ref={imageRef}
@@ -113,6 +133,7 @@ function MapImageMarkerForSource({
                     maxWidth: "none",
                     pointerEvents: "none",
                     userSelect: "none",
+                    ...(clipPath ? {clipPath} : {}),
                     visibility: decoded ? "visible" : "hidden",
                 }}
             />

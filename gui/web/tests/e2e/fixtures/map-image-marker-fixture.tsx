@@ -2,7 +2,7 @@ import {useState} from "react";
 import {createRoot} from "react-dom/client";
 import Map, {useMap} from "react-map-gl/mapbox";
 import mapboxgl from "mapbox-gl";
-import {DOCK_APPEARANCES, MOWER_APPEARANCES} from "../../../src/constants/mowerAppearances.ts";
+import {DOCK_APPEARANCES, DOCK_FOREGROUND_CLIP_PATH, MOWER_APPEARANCES} from "../../../src/constants/mowerAppearances.ts";
 import {MapImageMarker} from "../../../src/pages/map/components/MapImageMarker.tsx";
 import "mapbox-gl/dist/mapbox-gl.css";
 
@@ -47,6 +47,17 @@ function MarkerFixture() {
                 longitude={CENTER[0]}
                 latitude={CENTER[1]}
                 headingRad={heading}
+                onLoad={() => {}}
+                onError={() => {}}
+            />
+            <MapImageMarker
+                image={DOCK_IMAGE}
+                alt=""
+                longitude={CENTER[0]}
+                latitude={CENTER[1]}
+                headingRad={heading}
+                clipPath={DOCK_FOREGROUND_CLIP_PATH}
+                zIndex={1000}
                 onLoad={() => {}}
                 onError={() => {}}
             />
