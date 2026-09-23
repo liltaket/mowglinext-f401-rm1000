@@ -40,8 +40,9 @@ import type {Feature} from "geojson";
 import type {MenuItemType} from "antd/es/menu/interface";
 import {ShapePickerDropdown} from "./ShapePickerDropdown.tsx";
 import type {ShapeType} from "../hooks/useMapEditing.ts";
-import {MOWER_APPEARANCES, type MowerAppearanceId} from "../../../constants/mowerAppearances.ts";
+import {getAvailableDockAppearances, MOWER_APPEARANCES, type DockAppearanceId, type MowerAppearanceId} from "../../../constants/mowerAppearances.ts";
 import {parseMowerAppearanceMenuKey} from "../../../constants/mowerAppearanceMenuKey.ts";
+import {parseDockAppearanceMenuKey} from "../../../constants/dockAppearanceMenuKey.ts";
 
 interface MowingAreaItem extends MenuItemType {
     feat: Feature;
@@ -85,6 +86,8 @@ interface MapToolbarMobileProps {
     emergency?: boolean;
     mowerAppearanceId?: MowerAppearanceId;
     onMowerAppearanceChange?: (id: MowerAppearanceId) => void;
+    dockAppearanceId?: DockAppearanceId;
+    onDockAppearanceChange?: (id: DockAppearanceId) => void;
     onStart?: () => Promise<void>;
     onHome?: () => Promise<void>;
     onEmergencyOn?: () => Promise<void>;
@@ -110,6 +113,7 @@ export const MapToolbarMobile = ({
     onPlaceDock, dockPlacementMode,
     stateName, highLevelState, emergency,
     mowerAppearanceId = "urdf", onMowerAppearanceChange = () => {},
+    dockAppearanceId = "marker", onDockAppearanceChange = () => {},
     onStart, onHome, onEmergencyOn, onEmergencyOff,
     onAreaRecording, onMowNextArea, onContinueOrPause,
     onBladeForward, onBladeBackward, onBladeOff,
@@ -204,6 +208,15 @@ export const MapToolbarMobile = ({
                 label: t(appearance.labelKey),
             })),
         },
+        {
+            key: "dockAppearance",
+            label: t("mapToolbar.dockAppearance"),
+            children: getAvailableDockAppearances(mowerAppearanceId).map((appearance) => ({
+                    key: `dockAppearance:${appearance.id}`,
+                    icon: appearance.id === dockAppearanceId ? <CheckOutlined /> : undefined,
+                    label: t(appearance.labelKey),
+                })),
+        },
         {type: "divider"},
         {key: "areaRecording", icon: <AimOutlined />, label: t("mapToolbarMobile.areaRecording")},
         {key: "mowNext", icon: <ForwardOutlined />, label: t("mapToolbarMobile.mowNextArea")},
@@ -234,6 +247,11 @@ export const MapToolbarMobile = ({
         const appearanceId = parseMowerAppearanceMenuKey(key);
         if (appearanceId) {
             onMowerAppearanceChange(appearanceId);
+            return;
+        }
+        const dockAppearanceId = parseDockAppearanceMenuKey(key);
+        if (dockAppearanceId) {
+            onDockAppearanceChange(dockAppearanceId);
             return;
         }
 

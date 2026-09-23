@@ -4,6 +4,10 @@ export interface ProjectedPoint {
 }
 
 export type ProjectLngLat = (coordinate: [number, number]) => ProjectedPoint;
+export interface MapImageDimensionsPx {
+    width: number;
+    height: number;
+}
 
 /** Convert the existing mower-heading LineString into ROS ENU yaw. */
 export function getMowerHeadingRad(
@@ -22,7 +26,7 @@ export function getMowerHeadingRad(
     return Math.atan2(deltaY, deltaX);
 }
 
-export function hasValidMowerPose(coordinates: readonly number[]): boolean {
+export function hasValidMapPosition(coordinates: readonly number[]): boolean {
     const [longitude, latitude] = coordinates;
     return Number.isFinite(longitude) && longitude >= -180 && longitude <= 180 &&
         Number.isFinite(latitude) && latitude >= -90 && latitude <= 90;
@@ -37,13 +41,15 @@ const MIN_COS_LATITUDE = 1e-6;
  * `visibleLengthM` at this map pose. Mapbox's map-aligned marker transform
  * supplies bearing and pitch foreshortening after this local Mercator scale.
  */
-export function calculateMapImageSizePx(
+export function calculateMapImageDimensionsPx(
     project: ProjectLngLat,
     longitude: number,
     latitude: number,
     visibleLengthM: number,
     visibleLengthFraction: number,
-): number | undefined {
+    visibleWidthM?: number,
+    visibleWidthFraction?: number,
+): MapImageDimensionsPx | undefined {
     if (
         !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
         !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
@@ -59,20 +65,43 @@ export function calculateMapImageSizePx(
     const origin = project([longitude, latitude]);
     const eastProbe = project([probeLongitude, latitude]);
     const pixelsPerMeter = Math.hypot(eastProbe.x - origin.x, eastProbe.y - origin.y) / SCALE_PROBE_M;
-    const size = pixelsPerMeter * visibleLengthM / visibleLengthFraction;
-    return Number.isFinite(size) && size > 0 ? size : undefined;
+    const height = pixelsPerMeter * visibleLengthM / visibleLengthFraction;
+    const hasWidthCalibration = visibleWidthM !== undefined || visibleWidthFraction !== undefined;
+    if (hasWidthCalibration && (
+        !Number.isFinite(visibleWidthM) || visibleWidthM! <= 0 ||
+        !Number.isFinite(visibleWidthFraction) || visibleWidthFraction! <= 0 || visibleWidthFraction! > 1
+    )) return undefined;
+    const width = hasWidthCalibration
+        ? pixelsPerMeter * visibleWidthM! / visibleWidthFraction!
+        : height;
+    return Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
+        ? {width, height}
+        : undefined;
 }
 
-/** Offset a square image so its normalized pose anchor sits at the marker's
- * center. Mapbox rotates the marker about that center, keeping the pose fixed.
+/** Compatibility helper for callers interested in the long-axis image size. */
+export function calculateMapImageSizePx(
+    project: ProjectLngLat,
+    longitude: number,
+    latitude: number,
+    visibleLengthM: number,
+    visibleLengthFraction: number,
+): number | undefined {
+    return calculateMapImageDimensionsPx(project, longitude, latitude, visibleLengthM, visibleLengthFraction)?.height;
+}
+
+/** Offset an image of any aspect ratio so its normalized pose anchor sits at
+ * the marker's center. Mapbox rotates the marker about that center, keeping
+ * the pose fixed.
  */
 export function getMapImageAnchorOffsetPx(
-    sizePx: number,
+    widthPx: number,
+    heightPx: number,
     poseAnchor: {x: number; y: number},
 ): {left: number; top: number} {
     return {
-        left: sizePx * (0.5 - poseAnchor.x),
-        top: sizePx * (0.5 - poseAnchor.y),
+        left: widthPx * (0.5 - poseAnchor.x),
+        top: heightPx * (0.5 - poseAnchor.y),
     };
 }
 

@@ -6,10 +6,14 @@ export type MowerAppearanceId = "urdf" | "biltema-rm1000";
 export interface MapImageAppearance {
     src: string;
     altKey: string;
-    /** Physical length represented by the visible object's long axis. */
+    /** Physical length represented by the source image's long axis. */
     visibleLengthM: number;
-    /** Fraction of the square source image occupied along its long axis. */
+    /** Fraction of the source image occupied along its long axis. */
     visibleLengthFraction: number;
+    /** Optional calibrated width; omitted for square-scaled mower art. */
+    visibleWidthM?: number;
+    /** Fraction of the source image occupied along its short axis. */
+    visibleWidthFraction?: number;
     /** Pose location in normalized source-image coordinates (0..1). */
     poseAnchor: {x: number; y: number};
 }
@@ -19,6 +23,15 @@ export interface MowerAppearance {
     labelKey: string;
     mowerImage?: MapImageAppearance;
     dockImage?: MapImageAppearance;
+}
+
+export type DockAppearanceId = "marker" | "generic" | "biltema-rm1000";
+
+export interface DockAppearance {
+    id: DockAppearanceId;
+    labelKey: string;
+    image?: MapImageAppearance;
+    onlyForMowerAppearance?: MowerAppearanceId;
 }
 
 export const MOWER_APPEARANCES: Record<MowerAppearanceId, MowerAppearance> = {
@@ -35,8 +48,56 @@ export const MOWER_APPEARANCES: Record<MowerAppearanceId, MowerAppearance> = {
             // is near the rear axle, not at the visual center of the body.
             poseAnchor: {x: 0.5, y: 0.77},
         },
+        dockImage: {
+            src: "/assets/robots/biltema-rm1000/dock.webp",
+            altKey: "mapToolbar.dockAppearanceBiltemaRm1000Alt",
+            visibleLengthM: 0.63,
+            visibleLengthFraction: 0.944,
+            visibleWidthM: 0.46,
+            visibleWidthFraction: 0.667,
+            // The image top edge follows dock-local +X; pose sits at x=0.
+            poseAnchor: {x: 0.5, y: 0.024},
+        },
     },
 };
+
+export const DOCK_APPEARANCES: Record<DockAppearanceId, DockAppearance> = {
+    marker: {id: "marker", labelKey: "mapToolbar.dockAppearanceMarker"},
+    generic: {
+        id: "generic",
+        labelKey: "mapToolbar.dockAppearanceGeneric",
+        image: {
+            src: "/assets/robots/generic/dock.webp",
+            altKey: "mapToolbar.dockAppearanceGenericAlt",
+            visibleLengthM: 0.63,
+            visibleLengthFraction: 0.951,
+            visibleWidthM: 0.46,
+            visibleWidthFraction: 0.678,
+            // The image top edge follows dock-local +X; pose sits at x=0.
+            poseAnchor: {x: 0.5, y: 0.02},
+        },
+    },
+    "biltema-rm1000": {
+        id: "biltema-rm1000",
+        labelKey: "mapToolbar.dockAppearanceBiltemaRm1000",
+        image: MOWER_APPEARANCES["biltema-rm1000"].dockImage,
+        onlyForMowerAppearance: "biltema-rm1000",
+    },
+};
+
+export function getAvailableDockAppearances(mowerAppearanceId: MowerAppearanceId): DockAppearance[] {
+    return Object.values(DOCK_APPEARANCES)
+        .filter((appearance) => !appearance.onlyForMowerAppearance || appearance.onlyForMowerAppearance === mowerAppearanceId);
+}
+
+export function resolveDockAppearance(value: unknown, mowerAppearanceId: MowerAppearanceId): DockAppearance {
+    if (value !== "generic" && value !== "biltema-rm1000") return DOCK_APPEARANCES.marker;
+    const appearance = DOCK_APPEARANCES[value];
+    if (appearance.onlyForMowerAppearance && appearance.onlyForMowerAppearance !== mowerAppearanceId) {
+        return DOCK_APPEARANCES.marker;
+    }
+    return appearance;
+}
 
 /** Unknown/stale GUI values fail closed to the existing URDF drawing. */
 export function resolveMowerAppearance(value: unknown): MowerAppearance {
@@ -50,5 +111,14 @@ export function shouldDisplayMowerImage(
     hasPose: boolean,
     hasHeading: boolean,
 ): boolean {
-    return Boolean(appearance.mowerImage && loadedSrc === appearance.mowerImage.src && hasPose && hasHeading);
+    return shouldDisplayMapImage(appearance.mowerImage, loadedSrc, hasPose, hasHeading);
+}
+
+export function shouldDisplayMapImage(
+    image: MapImageAppearance | undefined,
+    loadedSrc: string | undefined,
+    hasPose: boolean,
+    hasHeading: boolean,
+): boolean {
+    return Boolean(image && loadedSrc === image.src && hasPose && hasHeading);
 }

@@ -133,15 +133,18 @@ export class DynObstacleFeature extends MowingFeature implements Feature<Polygon
 }
 
 export class DockFeatureBase extends PointFeatureBase  {
+    private headingValid: boolean;
+
     declare properties: {
         color: string;
         feature_type: string;
         heading: number;
     };
 
-    constructor(coordinate: Position, heading = 0) {
+    constructor(coordinate: Position, heading?: number) {
         super('dock', coordinate,'dock');
-        this.properties.heading = heading;
+        this.properties.heading = Number.isFinite(heading) ? heading! : 0;
+        this.headingValid = Number.isFinite(heading);
         this.setColor('#ff00f2');
     }
 
@@ -149,8 +152,13 @@ export class DockFeatureBase extends PointFeatureBase  {
         return this.properties.heading ?? 0;
     }
 
+    hasValidHeading(): boolean {
+        return this.headingValid;
+    }
+
     setHeading(heading: number) {
         this.properties.heading = heading;
+        this.headingValid = Number.isFinite(heading);
     }
 
     getCoordinates(): Position {
@@ -452,4 +460,3 @@ export function cloneFeature<T extends MowingFeature>(feature: T): T {
     copy.geometry = structuredClone(feature.geometry);
     return copy;
 }
-

@@ -1,9 +1,10 @@
 import {describe, expect, it} from "vitest";
 import {
     calculateMapImageSizePx,
+    calculateMapImageDimensionsPx,
     getMapImageAnchorOffsetPx,
     getMowerHeadingRad,
-    hasValidMowerPose,
+    hasValidMapPosition,
     rosHeadingToMapboxRotation,
 } from "./mapImageMarkerMath.ts";
 
@@ -36,15 +37,15 @@ describe("map image marker geometry", () => {
         expect(getMowerHeadingRad([], identity)).toBeUndefined();
         expect(getMowerHeadingRad([[1, 2], [1, 2]], identity)).toBeUndefined();
         expect(getMowerHeadingRad([[0, 0], [Number.NaN, 1]], identity)).toBeUndefined();
-        expect(hasValidMowerPose([18.06, 59.33])).toBe(true);
-        expect(hasValidMowerPose([181, 59.33])).toBe(false);
-        expect(hasValidMowerPose([18, Number.NaN])).toBe(false);
+        expect(hasValidMapPosition([18.06, 59.33])).toBe(true);
+        expect(hasValidMapPosition([181, 59.33])).toBe(false);
+        expect(hasValidMapPosition([18, Number.NaN])).toBe(false);
     });
 
     it("keeps the normalized pose anchor at the image center for every heading", () => {
         const size = 240;
         const anchor = {x: 0.5, y: 0.77};
-        const offset = getMapImageAnchorOffsetPx(size, anchor);
+        const offset = getMapImageAnchorOffsetPx(size, size, anchor);
         const point = {x: size * anchor.x + offset.left, y: size * anchor.y + offset.top};
         expect(point).toEqual({x: size / 2, y: size / 2});
         for (const heading of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
@@ -54,6 +55,12 @@ describe("map image marker geometry", () => {
             expect(rotatedX).toBeCloseTo(size / 2);
             expect(rotatedY).toBeCloseTo(size / 2);
         }
+    });
+
+    it("applies both normalized anchor axes to a non-square image", () => {
+        const offset = getMapImageAnchorOffsetPx(300, 240, {x: 0.2, y: 0.75});
+        expect(300 * 0.2 + offset.left).toBeCloseTo(150);
+        expect(240 * 0.75 + offset.top).toBeCloseTo(120);
     });
 
     it("scales calibrated length over zoom levels and at the local realistic latitude", () => {
@@ -68,5 +75,12 @@ describe("map image marker geometry", () => {
         const StockholmScale = sizes[1]!;
         expect(StockholmScale / equatorScale!).toBeCloseTo(1 / Math.cos(59.33 * radians), 2);
         expect(calculateMapImageSizePx(mercatorProject(2048), 18, 90, 0.57, 0.9)).toBeUndefined();
+    });
+
+    it("supports independent width and length calibration for a dock image", () => {
+        const dimensions = calculateMapImageDimensionsPx(mercatorProject(2048), 18.06, 59.33, 0.63, 0.944, 0.46, 0.667);
+        expect(dimensions).toBeDefined();
+        expect(dimensions!.width / dimensions!.height).toBeCloseTo((0.46 / 0.667) / (0.63 / 0.944), 3);
+        expect(calculateMapImageDimensionsPx(mercatorProject(2048), 18.06, 59.33, 0.63, 0.944, 0.46, undefined)).toBeUndefined();
     });
 });

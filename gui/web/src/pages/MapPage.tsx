@@ -14,7 +14,7 @@ import {FeatureCollection, Position} from "geojson";
 import {useMowerAction} from "../components/MowerActions.tsx";
 import {MapStyle} from "./MapStyle.tsx";
 import {drawLine, itranspose, transpose} from "../utils/map.tsx";
-import {resolveMowerAppearance, shouldDisplayMowerImage, type MowerAppearanceId} from "../constants/mowerAppearances.ts";
+import {resolveDockAppearance, resolveMowerAppearance, shouldDisplayMapImage, shouldDisplayMowerImage, type DockAppearanceId, type MowerAppearanceId} from "../constants/mowerAppearances.ts";
 import {useSettings} from "../hooks/useSettings.ts";
 import {useConfig} from "../hooks/useConfig.tsx";
 import {useEnv} from "../hooks/useEnv.tsx";
@@ -38,7 +38,7 @@ import {ObstacleProposalsPanel} from "./map/components/ObstacleProposalsPanel.ts
 import {extractObstacleProposals, isDigProposal} from "./map/utils/obstacleProposals.ts";
 import {MapOffsetPanel} from "./map/components/MapOffsetPanel.tsx";
 import {MapImageMarker} from "./map/components/MapImageMarker.tsx";
-import {getMowerHeadingRad, hasValidMowerPose} from "./map/components/mapImageMarkerMath.ts";
+import {getMowerHeadingRad, hasValidMapPosition} from "./map/components/mapImageMarkerMath.ts";
 import {MapToolbar} from "./map/components/MapToolbar.tsx";
 import {MapToolbarMobile} from "./map/components/MapToolbarMobile.tsx";
 import {MapEditorToolbar} from "./map/components/MapEditorToolbar.tsx";
@@ -87,7 +87,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         type: "FeatureCollection",
         features: []
     })
-    const {config, setConfig} = useConfig(["gui.map.offset.x", "gui.map.offset.y", "gui.map.display.bearing", "gui.map.mower.appearance"])
+    const {config, setConfig} = useConfig(["gui.map.offset.x", "gui.map.offset.y", "gui.map.display.bearing", "gui.map.mower.appearance", "gui.map.dock.appearance"])
     const envs = useEnv()
     const guiApi = useApi()
     const [tileUri, setTileUri] = useState<string | undefined>()
@@ -102,14 +102,27 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const [selectedProposalId, setSelectedProposalId] = useState<number | null>(null);
     const [features, setFeatures] = useState<Record<string, MowingFeature>>({});
     const mowerAppearance = resolveMowerAppearance(config["gui.map.mower.appearance"]);
+    const dockAppearance = resolveDockAppearance(config["gui.map.dock.appearance"], mowerAppearance.id);
     const [loadedMowerImageSrc, setLoadedMowerImageSrc] = useState<string>();
+    const [loadedDockImageSrc, setLoadedDockImageSrc] = useState<string>();
     const mowerImage = mowerAppearance.mowerImage;
+    const dockImage = dockAppearance.image;
     const mowerFeature = features.mower;
-    const mowerHasValidPose = mowerFeature instanceof MowerFeatureBase && hasValidMowerPose(mowerFeature.geometry.coordinates);
+    const dockFeature = features.dock;
+    const mowerHasValidPose = mowerFeature instanceof MowerFeatureBase && hasValidMapPosition(mowerFeature.geometry.coordinates);
+    const dockHasValidPose = dockFeature instanceof DockFeatureBase && hasValidMapPosition(dockFeature.getCoordinates());
+    const dockHeadingRad = dockFeature instanceof DockFeatureBase && dockFeature.hasValidHeading() && Number.isFinite(dockFeature.getHeading())
+        ? dockFeature.getHeading()
+        : undefined;
     const mowerHeadingFeature = features["mower-heading"];
     const handleMowerAppearanceChange = (id: MowerAppearanceId) => {
         setLoadedMowerImageSrc(undefined);
+        setLoadedDockImageSrc(undefined);
         void setConfig({"gui.map.mower.appearance": id});
+    };
+    const handleDockAppearanceChange = (id: DockAppearanceId) => {
+        setLoadedDockImageSrc(undefined);
+        void setConfig({"gui.map.dock.appearance": id});
     };
     const [dockPlacementMode, setDockPlacementMode] = useState<boolean>(false);
     // OpenMower import preview — populated by handleImportOpenMower after
@@ -186,6 +199,12 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         mowerHasValidPose,
         mowerHeadingRad !== undefined,
     );
+    const dockImageReady = shouldDisplayMapImage(
+        dockImage,
+        loadedDockImageSrc,
+        dockHasValidPose,
+        dockHeadingRad !== undefined,
+    );
 
     // Display-only features (mower, dock, heading, paths) rendered as separate layers
     const displayFeatures = useMemo<GeoJSON.FeatureCollection>(() => {
@@ -195,6 +214,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                 f.id !== "mower" && f.id !== "mower-heading" &&
                 f.properties.feature_type !== "mower-footprint"
             ))
+            .filter(f => !dockImageReady || (f.id !== "dock" && f.id !== "dock-heading"))
             .map(f => ({
                 type: "Feature" as const,
                 id: f.id,
@@ -217,7 +237,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         }
 
         return {type: "FeatureCollection", features: feats};
-    }, [features, offsetX, offsetY, datum, LAYER_COLORS, mowerImageReady]);
+    }, [features, offsetX, offsetY, datum, LAYER_COLORS, mowerImageReady, dockImageReady]);
 
     // Layers for the persistent tracked-obstacle polygons (feature_type
     // 'dyn-obstacle', carried in the same display-features source). Rendered as
@@ -284,6 +304,17 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             onError={() => setLoadedMowerImageSrc(undefined)}
         />
         : null;
+    const dockImageMarker = dockImage && dockFeature instanceof DockFeatureBase && dockHasValidPose && dockHeadingRad !== undefined
+        ? <MapImageMarker
+            image={dockImage}
+            alt={t(dockImage.altKey)}
+            longitude={dockFeature.geometry.coordinates[0]}
+            latitude={dockFeature.geometry.coordinates[1]}
+            headingRad={dockHeadingRad}
+            onLoad={() => setLoadedDockImageSrc(dockImage.src)}
+            onError={() => setLoadedDockImageSrc(undefined)}
+        />
+        : null;
 
     // Compute map bounds for the Mapbox viewport — depends on map data for centering
     const [map_ne, map_sw] = useMemo<[[number, number], [number, number]]>(() => {
@@ -347,7 +378,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             // dock at NaN; skip the marker instead when the pose is absent.
             if (map.dock_x !== undefined && map.dock_y !== undefined) {
                 const dock_lonlat = transpose(offsetX, offsetY, datum, map.dock_y, map.dock_x)
-                newFeatures["dock"] = new DockFeatureBase(dock_lonlat, map.dock_heading ?? 0);
+                newFeatures["dock"] = new DockFeatureBase(dock_lonlat, map.dock_heading);
             }
         }
         if (path?.poses) {
@@ -715,7 +746,9 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         const coord: [number, number] = [e.lngLat.lng, e.lngLat.lat];
         setFeatures(prev => {
             const existingDock = prev["dock"];
-            const heading = existingDock instanceof DockFeatureBase ? existingDock.getHeading() : 0;
+            const heading = existingDock instanceof DockFeatureBase && existingDock.hasValidHeading()
+                ? existingDock.getHeading()
+                : undefined;
             return {...prev, dock: new DockFeatureBase(coord, heading)};
         });
         setHasUnsavedChanges(true);
@@ -947,6 +980,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         {renderDynObstacleLayers(false)}
                     </Source>
                     {mowerImageMarker}
+                    {dockImageMarker}
                 </Map> : <Spinner/>}
             </div>
         );
@@ -1107,6 +1141,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         {renderDynObstacleLayers(true)}
                     </Source>
                     {mowerImageMarker}
+                    {dockImageMarker}
                     {/* PENDING obstacle proposals (dig reports): dashed, never a real keepout */}
                     {renderProposalLayers()}
                     {/* fusion_graph's LiDAR anchor map (walls as ink, scanned ground as a faint wash). */}
@@ -1180,6 +1215,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         onToggleSatellite={() => setUseSatellite(!useSatellite)}
                         mowerAppearanceId={mowerAppearance.id}
                         onMowerAppearanceChange={handleMowerAppearanceChange}
+                        dockAppearanceId={dockAppearance.id}
+                        onDockAppearanceChange={handleDockAppearanceChange}
                         onManualMode={handleManualMode}
                         onStopManualMode={handleStopManualMode}
                         onBackupMap={handleBackupMap}
@@ -1238,6 +1275,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             useSatellite={useSatellite}
                             mowerAppearanceId={mowerAppearance.id}
                             onMowerAppearanceChange={handleMowerAppearanceChange}
+                            dockAppearanceId={dockAppearance.id}
+                            onDockAppearanceChange={handleDockAppearanceChange}
                             mowingAreas={mowingAreas}
                             stateName={highLevelStatus.highLevelStatus.state_name}
                             highLevelState={highLevelStatus.highLevelStatus.state}

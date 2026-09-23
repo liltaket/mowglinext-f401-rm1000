@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {resolveMowerAppearance, shouldDisplayMowerImage} from "./mowerAppearances.ts";
+import {getAvailableDockAppearances, resolveDockAppearance, resolveMowerAppearance, shouldDisplayMapImage, shouldDisplayMowerImage} from "./mowerAppearances.ts";
 
 describe("mower appearance registry", () => {
     it("uses the bundled RM1000 image only after an explicit GUI appearance selection", () => {
@@ -23,5 +23,26 @@ describe("mower appearance registry", () => {
         expect(shouldDisplayMowerImage(appearance, "/missing.webp", true, true)).toBe(false);
         expect(shouldDisplayMowerImage(appearance, src, true, true)).toBe(true);
         expect(shouldDisplayMowerImage(resolveMowerAppearance("urdf"), src, true, true)).toBe(false);
+    });
+
+    it("keeps the existing dock marker as the default and restricts the Biltema dock to that mower appearance", () => {
+        expect(getAvailableDockAppearances("urdf").map(({id}) => id)).toEqual(["marker", "generic"]);
+        expect(getAvailableDockAppearances("biltema-rm1000").map(({id}) => id)).toEqual(["marker", "generic", "biltema-rm1000"]);
+        expect(resolveDockAppearance(undefined, "urdf").id).toBe("marker");
+        expect(resolveDockAppearance("stale", "biltema-rm1000").id).toBe("marker");
+        expect(resolveDockAppearance("biltema-rm1000", "urdf").id).toBe("marker");
+        expect(resolveDockAppearance("biltema-rm1000", "biltema-rm1000").image?.src)
+            .toBe("/assets/robots/biltema-rm1000/dock.webp");
+        expect(resolveDockAppearance("generic", "urdf").image?.src).toBe("/assets/robots/generic/dock.webp");
+        expect(resolveDockAppearance("generic", "biltema-rm1000").image?.src).toBe("/assets/robots/generic/dock.webp");
+    });
+
+    it("keeps the generic dock marker until the selected image is decoded with a valid pose and heading", () => {
+        const image = resolveDockAppearance("generic", "urdf").image;
+        expect(shouldDisplayMapImage(image, undefined, true, true)).toBe(false);
+        expect(shouldDisplayMapImage(image, image?.src, false, true)).toBe(false);
+        expect(shouldDisplayMapImage(image, image?.src, true, false)).toBe(false);
+        expect(shouldDisplayMapImage(image, image?.src, true, true)).toBe(true);
+        expect(shouldDisplayMapImage(undefined, image?.src, true, true)).toBe(false);
     });
 });

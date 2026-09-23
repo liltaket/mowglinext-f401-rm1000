@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from "react";
 import {Marker, useMap} from "react-map-gl/mapbox";
 import type {MapImageAppearance} from "../../../constants/mowerAppearances.ts";
-import {calculateMapImageSizePx, getMapImageAnchorOffsetPx, rosHeadingToMapboxRotation} from "./mapImageMarkerMath.ts";
+import {calculateMapImageDimensionsPx, getMapImageAnchorOffsetPx, rosHeadingToMapboxRotation} from "./mapImageMarkerMath.ts";
 
 interface MapImageMarkerProps {
     image: MapImageAppearance;
@@ -26,7 +26,7 @@ function MapImageMarkerForSource({
     image, alt, longitude, latitude, headingRad, onLoad, onError,
 }: MapImageMarkerProps) {
     const {current: map} = useMap();
-    const [assetSizePx, setAssetSizePx] = useState(0);
+    const [assetSizePx, setAssetSizePx] = useState<{width: number; height: number}>();
     const [decoded, setDecoded] = useState(false);
     const [loadFailed, setLoadFailed] = useState(false);
     const imageRef = useRef<HTMLImageElement>(null);
@@ -51,14 +51,16 @@ function MapImageMarkerForSource({
         if (!map || !Number.isFinite(longitude) || !Number.isFinite(latitude)) return;
 
         const updateSize = () => {
-            const size = calculateMapImageSizePx(
+            const size = calculateMapImageDimensionsPx(
                 (coordinate) => map.project(coordinate),
                 longitude,
                 latitude,
                 image.visibleLengthM,
                 image.visibleLengthFraction,
+                image.visibleWidthM,
+                image.visibleWidthFraction,
             );
-            setAssetSizePx(size ?? 0);
+            setAssetSizePx(size);
         };
 
         updateSize();
@@ -68,10 +70,10 @@ function MapImageMarkerForSource({
             map.off("move", updateSize);
             map.off("resize", updateSize);
         };
-    }, [map, longitude, latitude, image.visibleLengthM, image.visibleLengthFraction]);
+    }, [map, longitude, latitude, image.visibleLengthM, image.visibleLengthFraction, image.visibleWidthM, image.visibleWidthFraction]);
 
-    if (assetSizePx === 0 || loadFailed) return null;
-    const imageOffset = getMapImageAnchorOffsetPx(assetSizePx, image.poseAnchor);
+    if (!assetSizePx || loadFailed) return null;
+    const imageOffset = getMapImageAnchorOffsetPx(assetSizePx.width, assetSizePx.height, image.poseAnchor);
 
     return (
         <Marker
@@ -81,7 +83,7 @@ function MapImageMarkerForSource({
             rotation={rosHeadingToMapboxRotation(headingRad)}
             rotationAlignment="map"
             pitchAlignment="map"
-            style={{width: assetSizePx, height: assetSizePx, pointerEvents: "none"}}
+            style={{width: assetSizePx.width, height: assetSizePx.height, pointerEvents: "none"}}
         >
             <img
                 ref={imageRef}
