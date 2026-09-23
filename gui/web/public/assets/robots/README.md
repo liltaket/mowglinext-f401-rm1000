@@ -1,9 +1,10 @@
 # Map robot images
 
 Store bundled, display-only robot images under `gui/web/public/assets/robots/`.
-Use product directories for model-specific images. Hardware preset names are
-not proof of shell identity; add an appearance mapping only when that identity
-is explicit.
+Use product directories for model-specific images and `generic/` for optional
+visual approximations available across models. Hardware preset names are not
+proof of shell identity; add an appearance mapping only when that identity is
+explicit.
 
 Prepare each image as a near-square transparent PNG or WebP at a resolution
 appropriate for the visible map size. Use a true top-down view with the mower's
@@ -23,10 +24,15 @@ alignment as calibrated.
 For dock images, the top edge points along dock-local +X (out toward the staging
 area). The map server places the dock body from `-dock_body_length` to the dock
 pose at `x=0`, so the top-center image anchor maps to that pose; it is calibrated
-to the image's top edge, not to a generic keepout rectangle. Both dock images
-show the RM1000 charging station, with and without its support sticker, and are
-only offered for the RM1000 appearance. The existing dock marker remains the
-default and fallback.
+to the image's top edge, not to a generic keepout rectangle. The support-sticker
+dock image shows the RM1000 station and is offered only for the RM1000
+appearance. The clean image is the contributor's RM1000 station photo with its
+model-specific branding removed. It is offered as a generic visual
+approximation that may suit many conventional mower docks; its nominal 0.63 ×
+0.46 m visual footprint comes from the RM1000 product dimensions above and is
+not a claim about another station's actual dimensions. Use a dedicated
+model-specific image and calibration when exact geometry is needed. The
+existing dock marker remains the universal default and fallback.
 
 The mower and dock images originate from photographs taken by the contributor,
 edited with AI-assisted tools and intentionally contributed under this

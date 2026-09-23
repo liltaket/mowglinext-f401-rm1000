@@ -24,7 +24,7 @@ export interface MowerAppearance {
     mowerImage?: MapImageAppearance;
 }
 
-export type DockAppearanceId = "marker" | "biltema-rm1000" | "biltema-rm1000-clean";
+export type DockAppearanceId = "marker" | "generic" | "biltema-rm1000";
 
 export interface DockAppearance {
     id: DockAppearanceId;
@@ -52,6 +52,22 @@ export const MOWER_APPEARANCES: Record<MowerAppearanceId, MowerAppearance> = {
 
 export const DOCK_APPEARANCES: Record<DockAppearanceId, DockAppearance> = {
     marker: {id: "marker", labelKey: "mapToolbar.dockAppearanceMarker"},
+    generic: {
+        id: "generic",
+        labelKey: "mapToolbar.dockAppearanceGeneric",
+        image: {
+            src: "/assets/robots/generic/dock.webp",
+            altKey: "mapToolbar.dockAppearanceGenericAlt",
+            // Nominal visual footprint inherited from the RM1000 source photo;
+            // it is only a sizing approximation for other charging stations.
+            visibleLengthM: 0.63,
+            visibleLengthFraction: 0.951,
+            visibleWidthM: 0.46,
+            visibleWidthFraction: 0.678,
+            // The image top edge follows dock-local +X; pose sits at x=0.
+            poseAnchor: {x: 0.5, y: 0.02},
+        },
+    },
     "biltema-rm1000": {
         id: "biltema-rm1000",
         labelKey: "mapToolbar.dockAppearanceBiltemaRm1000",
@@ -67,21 +83,6 @@ export const DOCK_APPEARANCES: Record<DockAppearanceId, DockAppearance> = {
         },
         onlyForMowerAppearance: "biltema-rm1000",
     },
-    "biltema-rm1000-clean": {
-        id: "biltema-rm1000-clean",
-        labelKey: "mapToolbar.dockAppearanceBiltemaRm1000Clean",
-        image: {
-            src: "/assets/robots/biltema-rm1000/dock-clean.webp",
-            altKey: "mapToolbar.dockAppearanceBiltemaRm1000CleanAlt",
-            visibleLengthM: 0.63,
-            visibleLengthFraction: 0.951,
-            visibleWidthM: 0.46,
-            visibleWidthFraction: 0.678,
-            // The image top edge follows dock-local +X; pose sits at x=0.
-            poseAnchor: {x: 0.5, y: 0.02},
-        },
-        onlyForMowerAppearance: "biltema-rm1000",
-    },
 };
 
 export function getAvailableDockAppearances(mowerAppearanceId: MowerAppearanceId): DockAppearance[] {
@@ -90,12 +91,23 @@ export function getAvailableDockAppearances(mowerAppearanceId: MowerAppearanceId
 }
 
 export function resolveDockAppearance(value: unknown, mowerAppearanceId: MowerAppearanceId): DockAppearance {
-    if (value !== "biltema-rm1000" && value !== "biltema-rm1000-clean") return DOCK_APPEARANCES.marker;
+    if (value !== "generic" && value !== "biltema-rm1000") return DOCK_APPEARANCES.marker;
     const appearance = DOCK_APPEARANCES[value];
     if (appearance.onlyForMowerAppearance && appearance.onlyForMowerAppearance !== mowerAppearanceId) {
         return DOCK_APPEARANCES.marker;
     }
     return appearance;
+}
+
+/** Reset only model-specific dock choices made incompatible by a mower change. */
+export function getDockAppearanceResetForMowerChange(
+    selectedDockAppearance: DockAppearance,
+    nextMowerAppearanceId: MowerAppearanceId,
+): DockAppearanceId | undefined {
+    return selectedDockAppearance.onlyForMowerAppearance &&
+        selectedDockAppearance.onlyForMowerAppearance !== nextMowerAppearanceId
+        ? "marker"
+        : undefined;
 }
 
 /** Unknown/stale GUI values fail closed to the existing URDF drawing. */

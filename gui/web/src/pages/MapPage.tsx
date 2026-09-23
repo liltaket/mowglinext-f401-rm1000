@@ -14,7 +14,7 @@ import {FeatureCollection, Position} from "geojson";
 import {useMowerAction} from "../components/MowerActions.tsx";
 import {MapStyle} from "./MapStyle.tsx";
 import {drawLine, itranspose, transpose} from "../utils/map.tsx";
-import {resolveDockAppearance, resolveMowerAppearance, shouldDisplayMapImage, shouldDisplayMowerImage, type DockAppearanceId, type MowerAppearanceId} from "../constants/mowerAppearances.ts";
+import {getDockAppearanceResetForMowerChange, resolveDockAppearance, resolveMowerAppearance, shouldDisplayMapImage, shouldDisplayMowerImage, type DockAppearanceId, type MowerAppearanceId} from "../constants/mowerAppearances.ts";
 import {useSettings} from "../hooks/useSettings.ts";
 import {useConfig} from "../hooks/useConfig.tsx";
 import {useEnv} from "../hooks/useEnv.tsx";
@@ -119,9 +119,10 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const handleMowerAppearanceChange = (id: MowerAppearanceId) => {
         setLoadedMowerImageSrc(undefined);
         setLoadedDockImageSrc(undefined);
+        const dockAppearanceReset = getDockAppearanceResetForMowerChange(dockAppearance, id);
         void setConfig({
             "gui.map.mower.appearance": id,
-            ...(id === "biltema-rm1000" ? {} : {"gui.map.dock.appearance": "marker"}),
+            ...(dockAppearanceReset ? {"gui.map.dock.appearance": dockAppearanceReset} : {}),
         });
     };
     const handleDockAppearanceChange = (id: DockAppearanceId) => {
