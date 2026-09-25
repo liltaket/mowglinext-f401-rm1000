@@ -197,8 +197,8 @@ static volatile float g_wheel_base = (float)WHEEL_BASE;
  * behaviour. The trim is hard-clamped to ±g_yaw_trim_limit_mps (also the PID
  * output limit), so even a wrong gyro_sign (positive feedback) can only add a
  * bounded differential the per-wheel loops still cap at ±MAX_MPS — a bounded
- * veer, never an unbounded spin. Gains/sign/enable are runtime-tunable via
- * PKT_ID_SET_YAW_PID. */
+ * veer, never an unbounded spin. Gains/sign/enable are runtime-tunable via the
+ * protocol-v7 parameter catalog (FW_PARAM_YAW_*). */
 /* Power-on gains/limit: drive_tuning_defaults.h (YAW_PI_*_DEFAULT). */
 /* Integral term is clamped TIGHTER than the total trim (leaves headroom for the
  * P term and limits integral-driven overshoot/hunting). */
@@ -449,9 +449,9 @@ static void on_cmd_vel(const uint8_t *data, size_t len) {
   cmd_wz = wz;
 
   /* Differential-drive inverse kinematics — per-wheel linear speed. Wheel base
-   * and the ±cap are runtime values (PKT_ID_SET_KINEMATICS); the compile-time
-   * WHEEL_BASE/MAX_MPS remain the power-on fallback. The cap can only be lowered
-   * below the compiled MAX_MPS ceiling (DRIVEMOTOR_GetMaxMps clamps it). */
+   * and the ±cap are runtime parameters (FW_PARAM_WHEEL_BASE/FW_PARAM_MAX_MPS);
+   * compile-time WHEEL_BASE/MAX_MPS remain the power-on fallback. The cap can
+   * only be lowered below the compiled MAX_MPS ceiling. */
   const float wheel_base = g_wheel_base;
   const float max_mps = DRIVEMOTOR_GetMaxMps();
   float left_mps = vx - wz * wheel_base * 0.5f;
