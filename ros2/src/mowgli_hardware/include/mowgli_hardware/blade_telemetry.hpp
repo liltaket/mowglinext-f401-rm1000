@@ -19,8 +19,8 @@ constexpr float blade_current_amps(const LlBladeStatus& packet)
 constexpr bool blade_telemetry_contract_compatible(const uint8_t protocol_version,
                                                    const uint8_t active_flags)
 {
-  return protocol_version == kMowgliProtocolVersion &&
-         (active_flags & CONFIG_CAPABILITY_LEGACY_BLADE_POWER_DECIWATTS) == 0u;
+  (void)active_flags;  // Optional v7 capabilities do not change wire compatibility.
+  return protocol_version == kMowgliProtocolVersion;
 }
 
 }  // namespace mowgli_hardware

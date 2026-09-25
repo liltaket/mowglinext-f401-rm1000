@@ -2859,8 +2859,6 @@ private:
 
     fw_protocol_version_ = pkt.protocol_version;
     firmware_debug_enabled_ = (pkt.active_flags & CONFIG_FLAG_FIRMWARE_DEBUG) != 0u;
-    const bool legacy_blade_power_encoding =
-        (pkt.active_flags & CONFIG_CAPABILITY_LEGACY_BLADE_POWER_DECIWATTS) != 0u;
     firmware_debug_requested_ = firmware_debug_enabled_;
     config_control_resend_count_ = 0;
     fw_version_major_ = pkt.fw_version_major;
