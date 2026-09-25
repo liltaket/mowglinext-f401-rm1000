@@ -14,6 +14,7 @@
 #define __ADC_H
 
 #include <stdint.h>
+#include "charger_adc_freshness.h"
 
 #if defined(BOARD_YARDFORCE500_VARIANT_B)
 #include "stm32f4xx_hal.h"
@@ -73,6 +74,7 @@ void TIM2_Init(void);
 void ADC_Charging_Init(void);
 
 void ADC_input(void);
+uint8_t ADC_ChargingFeedbackIsFresh(uint32_t now_ms, uint32_t max_age_ms);
 
 void HAL_ADC_ConvCpltCallback (ADC_HandleTypeDef* hadc);
 

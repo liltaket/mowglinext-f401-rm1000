@@ -57,6 +57,8 @@ RTC_HandleTypeDef hrtc = {0};
 
 ADC_Charging_channelSelection_e adc_charging_eChannelSelection = ADC_CHARGING_CHANNEL_CURRENT;
 
+static volatile charger_adc_freshness_t charger_adc_progress;
+
 volatile uint16_t adc_u16BatteryVoltage       = 0;
 volatile uint16_t adc_u16Current              = 0;
 volatile uint16_t adc_u16ChargerVoltage       = 0;
@@ -169,6 +171,7 @@ void TIM2_Init(void)
  */
 void ADC_Charging_Init(void)
 {
+	charger_adc_freshness_reset(&charger_adc_progress);
 	// Configuration: ADC1 for Yardforce 500B
 	// 				  ADC2 for Yardforce 500 original
 #if BOARD_YARDFORCE500_VARIANT_ORIG
@@ -359,6 +362,22 @@ void ADC_input(void)
 
 }
 
+uint8_t ADC_ChargingFeedbackIsFresh(uint32_t now_ms, uint32_t max_age_ms)
+{
+    charger_adc_freshness_t snapshot;
+    uint8_t i;
+
+    __disable_irq();
+    snapshot.valid_mask = charger_adc_progress.valid_mask;
+    for (i = 0; i < CHARGER_ADC_REQUIRED_COUNT; ++i)
+    {
+        snapshot.completed_at_ms[i] = charger_adc_progress.completed_at_ms[i];
+    }
+    __enable_irq();
+
+    return charger_adc_freshness_is_fresh(&snapshot, now_ms, max_age_ms);
+}
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
 #ifdef OPTION_PERIMETER
@@ -376,18 +395,22 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
         {
         case ADC_CHARGING_CHANNEL_CURRENT:
             adc_u16Current = l_u16Rawdata;
+            charger_adc_freshness_mark(&charger_adc_progress, CHARGER_ADC_CURRENT, HAL_GetTick());
             break;
 
         case ADC_CHARGING_CHANNEL_CHARGEVOLTAGE:
             adc_u16ChargerVoltage = l_u16Rawdata;
+            charger_adc_freshness_mark(&charger_adc_progress, CHARGER_ADC_CHARGE_VOLTAGE, HAL_GetTick());
             break;
 
         case ADC_CHARGING_CHANNEL_BATTERYVOLTAGE:
             adc_u16BatteryVoltage = l_u16Rawdata;
+            charger_adc_freshness_mark(&charger_adc_progress, CHARGER_ADC_BATTERY_VOLTAGE, HAL_GetTick());
             break;
 
         case ADC_CHARGING_CHANNEL_CHARGERINPUTVOLTAGE:
             adc_u16ChargerInputVoltage = l_u16Rawdata;
+            charger_adc_freshness_mark(&charger_adc_progress, CHARGER_ADC_INPUT_VOLTAGE, HAL_GetTick());
             break;
 
         case ADC_CHARGING_CHANNEL_NTC:
