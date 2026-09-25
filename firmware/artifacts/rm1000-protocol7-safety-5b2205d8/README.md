@@ -1,5 +1,11 @@
 # RM1000 protocol-v7 safety review candidate
 
+> Historical package for source `5b2205d8`. It is retained unchanged as a
+> record of that build and is superseded for current review by
+> [`rm1000-protocol7-arch-safety-596cf9c1`](../rm1000-protocol7-arch-safety-596cf9c1/README.md).
+> Use the newer package when reviewing the shared actuator-authorization
+> architecture; these older BIN/ELF files do not contain those later changes.
+
 This package is the clean PlatformIO build of the exact committed source below.
 It is a review artifact for the private `liltaket/mowglinext-f401-rm1000` fork;
 it is not an upstream release and has not been flashed to the mower.
