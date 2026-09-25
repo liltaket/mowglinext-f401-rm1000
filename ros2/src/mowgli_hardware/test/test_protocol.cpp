@@ -27,15 +27,129 @@
  */
 
 #include <cstring>
+#include <type_traits>
 #include <vector>
 
 #include "mowgli_hardware/blade_telemetry.hpp"
 #include "mowgli_hardware/crc16.hpp"
 #include "mowgli_hardware/ll_datatypes.hpp"
 #include "mowgli_hardware/packet_handler.hpp"
+#include "mowgli_protocol.h"
 #include <gtest/gtest.h>
 
 using namespace mowgli_hardware;
+
+static_assert(MOWGLI_PROTOCOL_VERSION == kMowgliProtocolVersion);
+static_assert(PKT_REBOOT_MAGIC == kLlRebootMagic);
+static_assert(PKT_PARAM_COMMIT_MAGIC == kLlParamCommitMagic);
+
+// Compare the independently maintained firmware C wire structs with the host
+// C++ structs at compile time. This pins member types, offsets, total sizes,
+// and IDs so an equal protocol-version integer cannot mask layout drift.
+#define ASSERT_WIRE_FIELD_MATCH(firmware_type, host_type, field)                                   \
+  static_assert(offsetof(firmware_type, field) == offsetof(host_type, field));                     \
+  static_assert(sizeof(((firmware_type*)nullptr)->field) == sizeof(((host_type*)nullptr)->field)); \
+  static_assert(std::is_same_v<decltype(((firmware_type*)nullptr)->field),                         \
+                               decltype(((host_type*)nullptr)->field)>)
+
+#define ASSERT_WIRE_PACKET_MATCH(firmware_type, host_type)   \
+  static_assert(sizeof(firmware_type) == sizeof(host_type)); \
+  ASSERT_WIRE_FIELD_MATCH(firmware_type, host_type, type);   \
+  ASSERT_WIRE_FIELD_MATCH(firmware_type, host_type, crc)
+
+ASSERT_WIRE_PACKET_MATCH(pkt_status_t, LlStatus);
+ASSERT_WIRE_FIELD_MATCH(pkt_status_t, LlStatus, status_bitmask);
+ASSERT_WIRE_FIELD_MATCH(pkt_status_t, LlStatus, uss_ranges_m);
+ASSERT_WIRE_FIELD_MATCH(pkt_status_t, LlStatus, emergency_bitmask);
+ASSERT_WIRE_FIELD_MATCH(pkt_status_t, LlStatus, v_charge);
+ASSERT_WIRE_FIELD_MATCH(pkt_status_t, LlStatus, v_system);
+ASSERT_WIRE_FIELD_MATCH(pkt_status_t, LlStatus, charging_current);
+ASSERT_WIRE_FIELD_MATCH(pkt_status_t, LlStatus, batt_percentage);
+ASSERT_WIRE_PACKET_MATCH(pkt_imu_t, LlImu);
+ASSERT_WIRE_FIELD_MATCH(pkt_imu_t, LlImu, dt_millis);
+ASSERT_WIRE_FIELD_MATCH(pkt_imu_t, LlImu, acceleration_mss);
+ASSERT_WIRE_FIELD_MATCH(pkt_imu_t, LlImu, gyro_rads);
+ASSERT_WIRE_FIELD_MATCH(pkt_imu_t, LlImu, mag_uT);
+ASSERT_WIRE_PACKET_MATCH(pkt_ui_event_t, LlUiEvent);
+ASSERT_WIRE_FIELD_MATCH(pkt_ui_event_t, LlUiEvent, button_id);
+ASSERT_WIRE_FIELD_MATCH(pkt_ui_event_t, LlUiEvent, press_duration);
+ASSERT_WIRE_PACKET_MATCH(pkt_odometry_t, LlOdometry);
+ASSERT_WIRE_FIELD_MATCH(pkt_odometry_t, LlOdometry, dt_millis);
+ASSERT_WIRE_FIELD_MATCH(pkt_odometry_t, LlOdometry, left_ticks);
+ASSERT_WIRE_FIELD_MATCH(pkt_odometry_t, LlOdometry, right_ticks);
+ASSERT_WIRE_FIELD_MATCH(pkt_odometry_t, LlOdometry, left_velocity_mm_s);
+ASSERT_WIRE_FIELD_MATCH(pkt_odometry_t, LlOdometry, right_velocity_mm_s);
+ASSERT_WIRE_PACKET_MATCH(pkt_reset_cause_t, LlResetCause);
+ASSERT_WIRE_FIELD_MATCH(pkt_reset_cause_t, LlResetCause, reset_cause);
+ASSERT_WIRE_FIELD_MATCH(pkt_reset_cause_t, LlResetCause, last_stage_before_reset);
+ASSERT_WIRE_PACKET_MATCH(pkt_heartbeat_t, LlHeartbeat);
+ASSERT_WIRE_FIELD_MATCH(pkt_heartbeat_t, LlHeartbeat, emergency_requested);
+ASSERT_WIRE_FIELD_MATCH(pkt_heartbeat_t, LlHeartbeat, emergency_release_requested);
+ASSERT_WIRE_PACKET_MATCH(pkt_hl_state_t, LlHighLevelState);
+ASSERT_WIRE_FIELD_MATCH(pkt_hl_state_t, LlHighLevelState, current_mode);
+ASSERT_WIRE_FIELD_MATCH(pkt_hl_state_t, LlHighLevelState, gps_quality);
+ASSERT_WIRE_PACKET_MATCH(pkt_cmd_vel_t, LlCmdVel);
+ASSERT_WIRE_FIELD_MATCH(pkt_cmd_vel_t, LlCmdVel, linear_x);
+ASSERT_WIRE_FIELD_MATCH(pkt_cmd_vel_t, LlCmdVel, angular_z);
+ASSERT_WIRE_PACKET_MATCH(pkt_cmd_blade_t, LlCmdBlade);
+ASSERT_WIRE_FIELD_MATCH(pkt_cmd_blade_t, LlCmdBlade, blade_on);
+ASSERT_WIRE_FIELD_MATCH(pkt_cmd_blade_t, LlCmdBlade, blade_dir);
+ASSERT_WIRE_PACKET_MATCH(pkt_reboot_t, LlReboot);
+ASSERT_WIRE_FIELD_MATCH(pkt_reboot_t, LlReboot, magic);
+ASSERT_WIRE_PACKET_MATCH(pkt_set_param_t, LlSetParam);
+ASSERT_WIRE_FIELD_MATCH(pkt_set_param_t, LlSetParam, param_id);
+ASSERT_WIRE_FIELD_MATCH(pkt_set_param_t, LlSetParam, value);
+ASSERT_WIRE_PACKET_MATCH(pkt_get_param_t, LlGetParam);
+ASSERT_WIRE_FIELD_MATCH(pkt_get_param_t, LlGetParam, param_id);
+ASSERT_WIRE_PACKET_MATCH(pkt_param_commit_t, LlParamCommit);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_commit_t, LlParamCommit, magic);
+ASSERT_WIRE_PACKET_MATCH(pkt_param_value_t, LlParamValue);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_value_t, LlParamValue, param_id);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_value_t, LlParamValue, status);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_value_t, LlParamValue, flags);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_value_t, LlParamValue, value);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_value_t, LlParamValue, default_value);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_value_t, LlParamValue, min_value);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_value_t, LlParamValue, max_value);
+ASSERT_WIRE_PACKET_MATCH(pkt_param_store_status_t, LlParamStoreStatus);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_store_status_t, LlParamStoreStatus, boot_source);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_store_status_t, LlParamStoreStatus, last_commit);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_store_status_t, LlParamStoreStatus, records_left);
+ASSERT_WIRE_FIELD_MATCH(pkt_param_store_status_t, LlParamStoreStatus, param_count);
+ASSERT_WIRE_PACKET_MATCH(pkt_blade_status_t, LlBladeStatus);
+ASSERT_WIRE_FIELD_MATCH(pkt_blade_status_t, LlBladeStatus, is_active);
+ASSERT_WIRE_FIELD_MATCH(pkt_blade_status_t, LlBladeStatus, rpm);
+ASSERT_WIRE_FIELD_MATCH(pkt_blade_status_t, LlBladeStatus, power_watts);
+ASSERT_WIRE_FIELD_MATCH(pkt_blade_status_t, LlBladeStatus, temperature);
+ASSERT_WIRE_FIELD_MATCH(pkt_blade_status_t, LlBladeStatus, error_count);
+ASSERT_WIRE_PACKET_MATCH(pkt_config_req_t, LlConfigReq);
+ASSERT_WIRE_FIELD_MATCH(pkt_config_req_t, LlConfigReq, flags);
+ASSERT_WIRE_PACKET_MATCH(pkt_config_rsp_t, LlConfigRsp);
+ASSERT_WIRE_FIELD_MATCH(pkt_config_rsp_t, LlConfigRsp, protocol_version);
+ASSERT_WIRE_FIELD_MATCH(pkt_config_rsp_t, LlConfigRsp, active_flags);
+ASSERT_WIRE_FIELD_MATCH(pkt_config_rsp_t, LlConfigRsp, fw_version_major);
+ASSERT_WIRE_FIELD_MATCH(pkt_config_rsp_t, LlConfigRsp, fw_version_minor);
+ASSERT_WIRE_FIELD_MATCH(pkt_config_rsp_t, LlConfigRsp, fw_version_patch);
+
+#define ASSERT_PACKET_ID_MATCH(firmware_id, host_id) static_assert(firmware_id == host_id)
+ASSERT_PACKET_ID_MATCH(PKT_ID_STATUS, PACKET_ID_LL_STATUS);
+ASSERT_PACKET_ID_MATCH(PKT_ID_IMU, PACKET_ID_LL_IMU);
+ASSERT_PACKET_ID_MATCH(PKT_ID_UI_EVENT, PACKET_ID_LL_UI_EVENT);
+ASSERT_PACKET_ID_MATCH(PKT_ID_ODOMETRY, PACKET_ID_LL_ODOMETRY);
+ASSERT_PACKET_ID_MATCH(PKT_ID_RESET_CAUSE, PACKET_ID_LL_RESET_CAUSE);
+ASSERT_PACKET_ID_MATCH(PKT_ID_CONFIG_REQ, PACKET_ID_LL_HIGH_LEVEL_CONFIG_REQ);
+ASSERT_PACKET_ID_MATCH(PKT_ID_CONFIG_RSP, PACKET_ID_LL_HIGH_LEVEL_CONFIG_RSP);
+ASSERT_PACKET_ID_MATCH(PKT_ID_PARAM_VALUE, PACKET_ID_LL_PARAM_VALUE);
+ASSERT_PACKET_ID_MATCH(PKT_ID_PARAM_STORE_STATUS, PACKET_ID_LL_PARAM_STORE_STATUS);
+ASSERT_PACKET_ID_MATCH(PKT_ID_HEARTBEAT, PACKET_ID_LL_HEARTBEAT);
+ASSERT_PACKET_ID_MATCH(PKT_ID_HL_STATE, PACKET_ID_LL_HIGH_LEVEL_STATE);
+ASSERT_PACKET_ID_MATCH(PKT_ID_CMD_VEL, PACKET_ID_LL_CMD_VEL);
+ASSERT_PACKET_ID_MATCH(PKT_ID_BLADE_STATUS, PACKET_ID_LL_BLADE_STATUS);
+ASSERT_PACKET_ID_MATCH(PKT_ID_CMD_BLADE, PACKET_ID_LL_CMD_BLADE);
+ASSERT_PACKET_ID_MATCH(PKT_ID_REBOOT, PACKET_ID_LL_REBOOT);
+ASSERT_PACKET_ID_MATCH(PKT_ID_SET_PARAM, PACKET_ID_LL_SET_PARAM);
+ASSERT_PACKET_ID_MATCH(PKT_ID_GET_PARAM, PACKET_ID_LL_GET_PARAM);
+ASSERT_PACKET_ID_MATCH(PKT_ID_PARAM_COMMIT, PACKET_ID_LL_PARAM_COMMIT);
 
 TEST(BladeTelemetry, LegacyWireCurrentIsConvertedToAmps)
 {

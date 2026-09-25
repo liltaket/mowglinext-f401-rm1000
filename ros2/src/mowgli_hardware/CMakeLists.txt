@@ -143,6 +143,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_protocol
     test/test_protocol.cpp
   )
+  target_include_directories(test_protocol
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../firmware/stm32/ros_usbnode/include
+  )
   target_link_libraries(test_protocol
     mowgli_hardware_core
   )
