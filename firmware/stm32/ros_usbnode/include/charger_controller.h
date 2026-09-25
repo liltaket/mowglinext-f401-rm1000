@@ -83,7 +83,8 @@ static inline uint16_t charger_control_step(charger_control_t *control,
     output->tf4_level = 1u;
     /* A live ceiling reduction must stop PWM as soon as feedback reaches the
      * new cap. CC and CV use the same effective target below it. */
-    if (input->charge_voltage >= input->max_voltage) {
+    if (input->battery_voltage >= input->max_voltage ||
+        input->charge_voltage >= input->max_voltage) {
       control->pwm = 0u;
       control->state = CHARGER_CONTROL_CHARGING_CV;
       break;

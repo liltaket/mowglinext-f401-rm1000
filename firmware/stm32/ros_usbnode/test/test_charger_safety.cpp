@@ -53,7 +53,7 @@ static void test_lower_voltage_limit_stops_pwm_immediately_in_cv()
   TEST_ASSERT_EQUAL_INT(CHARGER_CONTROL_CHARGING_CV, output.state);
 }
 
-static void test_lower_limit_below_battery_never_increases_cc_pwm()
+static void test_lower_limit_below_battery_immediately_stops_cc_pwm()
 {
   charger_control_t control = {CHARGER_CONTROL_CHARGING_CC, 120u, 0u};
   charger_control_output_t output;
@@ -63,11 +63,13 @@ static void test_lower_limit_below_battery_never_increases_cc_pwm()
   input.max_voltage = 27.5f;
 
   charger_control_step(&control, &input, &output);
-  TEST_ASSERT_EQUAL_UINT16(119u, output.pwm);
+  TEST_ASSERT_EQUAL_UINT16(0u, output.pwm);
+  TEST_ASSERT_EQUAL_INT(CHARGER_CONTROL_CHARGING_CV, output.state);
 
   input.now_ms++;
+  control.pwm = 900u;
   charger_control_step(&control, &input, &output);
-  TEST_ASSERT_EQUAL_UINT16(118u, output.pwm);
+  TEST_ASSERT_EQUAL_UINT16(0u, output.pwm);
 }
 
 static void test_cv_respects_effective_target_below_runtime_ceiling()
@@ -227,7 +229,7 @@ void run_charger_safety_tests()
 {
   RUN_TEST(test_lower_voltage_limit_stops_pwm_immediately_in_cc);
   RUN_TEST(test_lower_voltage_limit_stops_pwm_immediately_in_cv);
-  RUN_TEST(test_lower_limit_below_battery_never_increases_cc_pwm);
+  RUN_TEST(test_lower_limit_below_battery_immediately_stops_cc_pwm);
   RUN_TEST(test_cv_respects_effective_target_below_runtime_ceiling);
   RUN_TEST(test_repeated_lower_limit_remains_a_hard_ceiling);
   RUN_TEST(test_stale_feedback_fails_safe_and_restarts_connection_sequence);
