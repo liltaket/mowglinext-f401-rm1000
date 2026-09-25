@@ -54,9 +54,11 @@ extern "C" {
  * host and firmware MUST match. The compat gate (MOWGLI_PROTOCOL_VERSION) blocks
  * mowing on a mismatch, and the CRC over the grown body means a v5 firmware fed
  * a 21-byte packet fails the CRC and safely drops it rather than misapplying it.
+ * v7 reserves optional packet 0x53 and capability 0x80 for F401 ROM DFU; this
+ * RM1000 build advertises no DFU capability and registers no handler.
  * ---------------------------------------------------------------------------*/
 
-#define MOWGLI_PROTOCOL_VERSION 6u
+#define MOWGLI_PROTOCOL_VERSION 7u
 
 /* ---------------------------------------------------------------------------
  * Firmware version (semantic version of THIS firmware build).
@@ -139,6 +141,10 @@ extern "C" {
  *  (e.g. IMU emitting NaN) without a manual power-cycle. */
 #define PKT_ID_REBOOT 0x52u
 #define PKT_REBOOT_MAGIC 0xB0u
+
+/** Reserved protocol-v7 request; this RM1000 build does not implement it. */
+#define PKT_ID_ENTER_DFU 0x53u
+#define PKT_ENTER_DFU_MAGIC 0xD3u
 
 /** Drive-motor PID/feedforward gains (Host -> Firmware). Lets the ROS 2 host
  *  retune the per-wheel velocity loop at runtime without reflashing. The
@@ -284,6 +290,7 @@ extern "C" {
 
 /** Optional firmware diagnostics / fine-grained breadcrumbs enabled. */
 #define CONFIG_FLAG_FIRMWARE_DEBUG (1u << 0u)
+#define CONFIG_CAP_USB_DFU 0x80u
 
 /* ---------------------------------------------------------------------------
  * Packed wire-format structs
@@ -471,6 +478,13 @@ typedef struct {
   uint8_t magic; /**< Must equal PKT_REBOOT_MAGIC (0xB0) */
   uint16_t crc;  /**< CRC-16 CCITT over preceding bytes */
 } pkt_reboot_t;
+
+/** Reserved protocol-v7 layout. No RM1000 handler is registered. */
+typedef struct {
+  uint8_t type;  /**< PKT_ID_ENTER_DFU */
+  uint8_t magic; /**< Must equal PKT_ENTER_DFU_MAGIC */
+  uint16_t crc;  /**< CRC-16 CCITT over preceding bytes */
+} pkt_enter_dfu_t;
 
 /**
  * @brief Drive-motor runtime tuning packet — Host -> Firmware
@@ -702,6 +716,8 @@ _Static_assert(sizeof(pkt_config_req_t) == 4u,
                "pkt_config_req_t layout unexpected");
 _Static_assert(sizeof(pkt_config_rsp_t) == 8u,
                "pkt_config_rsp_t layout unexpected");
+_Static_assert(sizeof(pkt_enter_dfu_t) == 4u,
+               "pkt_enter_dfu_t layout unexpected");
 _Static_assert(sizeof(pkt_set_drive_pid_t) == 27u,
                "pkt_set_drive_pid_t layout unexpected");
 _Static_assert(offsetof(pkt_set_drive_pid_t, type) == 0u,

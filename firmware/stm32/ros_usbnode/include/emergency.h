@@ -8,6 +8,9 @@ extern "C" {
 #endif
 
 uint8_t Emergency_State(void);
+/* Cached raw physical-sensor state, updated by EmergencyController() in the
+ * foreground. Safe to read from interrupt context; performs no GPIO/I2C I/O. */
+uint8_t Emergency_PhysicalActive(void);
 void Emergency_SetState(uint8_t new_emergency_state);
 int Emergency_Tilt(void);
 int Emergency_StopButtonYellow(void);

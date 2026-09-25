@@ -453,10 +453,12 @@ export type Status = {
   dig_escalated_distance_m?: number;
   dig_escalated_required_distance_m?: number;
   mower_esc_status?: number;
+  mower_esc_error_count?: number;
   mower_esc_temperature?: number;
   mower_esc_current?: number;
   mower_motor_temperature?: number;
   mower_motor_rpm?: number;
+  mower_motor_power_watts?: number;
   blade_status_stamp?: { sec: number; nanosec: number };
   firmware_version?: string;
   firmware_protocol_version?: number;

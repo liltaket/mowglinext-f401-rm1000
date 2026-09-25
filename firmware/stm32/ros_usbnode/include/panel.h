@@ -157,6 +157,8 @@ extern UART_HandleTypeDef PANEL_USART_Handler;
 
 void PANEL_Init(void);
 void PANEL_Tick(void);
+/* ISR-safe: requests foreground recovery after ORE/FE/NE/DMA errors. */
+void PANEL_OnUartError(void);
 
 void PANEL_Set_LED(uint8_t led, PANEL_LED_STATE state);
 int PANEL_Get_Key_Pressed(void);

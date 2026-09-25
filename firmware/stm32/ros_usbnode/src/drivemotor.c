@@ -101,6 +101,10 @@ DMA_HandleTypeDef hdma_usart2_tx;
 
 static DRIVEMOTOR_STATE_e drivemotor_eState = DRIVEMOTOR_INIT_1;
 static rx_status_e drivemotors_eRxFlag = RX_WAIT;
+/* Foreground command gate for the autonomous collision reverse state. A
+ * zero-speed request (cmd_vel timeout, IDLE, emergency hard stop) must cancel
+ * the open-loop maneuver instead of being ignored for up to two seconds. */
+static volatile uint8_t drivemotor_external_stop_requested = 1u;
 
 /* DMA writes this buffer only.  The completion IRQ validates it then copies a
  * complete immutable snapshot; foreground never reads DMA memory. */
@@ -490,8 +494,9 @@ void DRIVEMOTOR_App_10ms(void) {
      * fires mid-reverse, hard-stop the wheels this frame and abandon the
      * maneuver back to RUN (where cmd_vel drive is itself gated to 0 by the
      * hard_stop path in cpp_main). */
-    if (Emergency_State() != 0 || !DRIVEMOTOR_FeedbackHealthy() ||
-        MOTORLINK_OutputInhibited()) {
+    if (Emergency_State() != 0 || drivemotor_external_stop_requested ||
+        main_eOpenmowerStatus == OPENMOWER_STATUS_IDLE ||
+        !DRIVEMOTOR_FeedbackHealthy() || MOTORLINK_OutputInhibited()) {
       drivemotor_prepareMsg(drivemotor_tx[drivemotor_tx_slot ^ 1u], 0, 0, 0, 0);
       drivemotor_eState = DRIVEMOTOR_RUN;
     } else {
@@ -761,6 +766,10 @@ void DRIVEMOTOR_SetSpeedSigned(int16_t left_pwm_signed,
    * a non-zero dir byte. */
   left_dir_req = (left_pwm_signed > 0) ? 1 : 0;
   right_dir_req = (right_pwm_signed > 0) ? 1 : 0;
+}
+
+void DRIVEMOTOR_SetSupervisorStop(uint8_t stop_requested) {
+  drivemotor_external_stop_requested = stop_requested ? 1u : 0u;
 }
 
 /**

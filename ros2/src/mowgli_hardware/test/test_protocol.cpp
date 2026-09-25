@@ -158,6 +158,17 @@ TEST(ProtocolSizes, ConfigPacketSizes)
   EXPECT_EQ(sizeof(LlConfigRsp), 8u);  // type(1) + proto(1) + flags(1) + semver(3) + crc(2)
 }
 
+TEST(BladeTelemetryContract, OptionalCapabilitiesDoNotChangeProtocolCompatibility)
+{
+  EXPECT_TRUE(blade_telemetry_contract_compatible(kMowgliProtocolVersion, 0u));
+  EXPECT_TRUE(
+      blade_telemetry_contract_compatible(kMowgliProtocolVersion, CONFIG_FLAG_FIRMWARE_DEBUG));
+  // Protocol-v7 optional capability flags (including USB DFU) do not alter
+  // base wire compatibility; firmware advertises only supported features.
+  EXPECT_TRUE(blade_telemetry_contract_compatible(kMowgliProtocolVersion, CONFIG_CAP_USB_DFU));
+  EXPECT_FALSE(blade_telemetry_contract_compatible(kMowgliProtocolVersion - 1u, 0u));
+}
+
 // ---------------------------------------------------------------------------
 // Packet ID consistency (ll_datatypes.hpp enum matches mowgli_protocol.h)
 // ---------------------------------------------------------------------------
@@ -176,6 +187,7 @@ TEST(ProtocolIds, PacketIdValues)
   EXPECT_EQ(PACKET_ID_LL_CMD_VEL, 0x50);
   EXPECT_EQ(PACKET_ID_LL_CMD_BLADE, 0x51);
   EXPECT_EQ(PACKET_ID_LL_REBOOT, 0x52);
+  EXPECT_EQ(PACKET_ID_LL_ENTER_DFU, 0x53);
   EXPECT_EQ(PACKET_ID_LL_SET_DRIVE_PID, 0x54);
 }
 

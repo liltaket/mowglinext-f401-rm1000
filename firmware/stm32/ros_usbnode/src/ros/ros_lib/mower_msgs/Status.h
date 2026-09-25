@@ -48,6 +48,8 @@ namespace mower_msgs
       _dig_escalated_required_distance_m_type dig_escalated_required_distance_m;
       typedef uint8_t _mower_esc_status_type;
       _mower_esc_status_type mower_esc_status;
+      typedef uint32_t _mower_esc_error_count_type;
+      _mower_esc_error_count_type mower_esc_error_count;
       typedef float _mower_esc_temperature_type;
       _mower_esc_temperature_type mower_esc_temperature;
       typedef float _mower_esc_current_type;
@@ -56,6 +58,8 @@ namespace mower_msgs
       _mower_motor_temperature_type mower_motor_temperature;
       typedef float _mower_motor_rpm_type;
       _mower_motor_rpm_type mower_motor_rpm;
+      typedef float _mower_motor_power_watts_type;
+      _mower_motor_power_watts_type mower_motor_power_watts;
       typedef ros::Time _blade_status_stamp_type;
       _blade_status_stamp_type blade_status_stamp;
       typedef const char* _firmware_version_type;
@@ -92,10 +96,12 @@ namespace mower_msgs
       dig_escalated_distance_m(0),
       dig_escalated_required_distance_m(0),
       mower_esc_status(0),
+      mower_esc_error_count(0),
       mower_esc_temperature(0),
       mower_esc_current(0),
       mower_motor_temperature(0),
       mower_motor_rpm(0),
+      mower_motor_power_watts(0),
       blade_status_stamp(),
       firmware_version(""),
       firmware_protocol_version(0),
@@ -202,6 +208,16 @@ namespace mower_msgs
       *(outbuffer + offset + 0) = (this->mower_esc_status >> (8 * 0)) & 0xFF;
       offset += sizeof(this->mower_esc_status);
       union {
+        uint32_t real;
+        uint32_t base;
+      } u_mower_esc_error_count;
+      u_mower_esc_error_count.real = this->mower_esc_error_count;
+      *(outbuffer + offset + 0) = (u_mower_esc_error_count.base >> (8 * 0)) & 0xFF;
+      *(outbuffer + offset + 1) = (u_mower_esc_error_count.base >> (8 * 1)) & 0xFF;
+      *(outbuffer + offset + 2) = (u_mower_esc_error_count.base >> (8 * 2)) & 0xFF;
+      *(outbuffer + offset + 3) = (u_mower_esc_error_count.base >> (8 * 3)) & 0xFF;
+      offset += sizeof(this->mower_esc_error_count);
+      union {
         float real;
         uint32_t base;
       } u_mower_esc_temperature;
@@ -241,6 +257,16 @@ namespace mower_msgs
       *(outbuffer + offset + 2) = (u_mower_motor_rpm.base >> (8 * 2)) & 0xFF;
       *(outbuffer + offset + 3) = (u_mower_motor_rpm.base >> (8 * 3)) & 0xFF;
       offset += sizeof(this->mower_motor_rpm);
+      union {
+        float real;
+        uint32_t base;
+      } u_mower_motor_power_watts;
+      u_mower_motor_power_watts.real = this->mower_motor_power_watts;
+      *(outbuffer + offset + 0) = (u_mower_motor_power_watts.base >> (8 * 0)) & 0xFF;
+      *(outbuffer + offset + 1) = (u_mower_motor_power_watts.base >> (8 * 1)) & 0xFF;
+      *(outbuffer + offset + 2) = (u_mower_motor_power_watts.base >> (8 * 2)) & 0xFF;
+      *(outbuffer + offset + 3) = (u_mower_motor_power_watts.base >> (8 * 3)) & 0xFF;
+      offset += sizeof(this->mower_motor_power_watts);
       offset += this->blade_status_stamp.serialize(outbuffer + offset);
       uint32_t length_firmware_version = strlen(this->firmware_version);
       varToArr(outbuffer + offset, length_firmware_version);
@@ -373,6 +399,17 @@ namespace mower_msgs
       this->mower_esc_status =  ((uint8_t) (*(inbuffer + offset)));
       offset += sizeof(this->mower_esc_status);
       union {
+        uint32_t real;
+        uint32_t base;
+      } u_mower_esc_error_count;
+      u_mower_esc_error_count.base = 0;
+      u_mower_esc_error_count.base |= ((uint32_t) (*(inbuffer + offset + 0))) << (8 * 0);
+      u_mower_esc_error_count.base |= ((uint32_t) (*(inbuffer + offset + 1))) << (8 * 1);
+      u_mower_esc_error_count.base |= ((uint32_t) (*(inbuffer + offset + 2))) << (8 * 2);
+      u_mower_esc_error_count.base |= ((uint32_t) (*(inbuffer + offset + 3))) << (8 * 3);
+      this->mower_esc_error_count = u_mower_esc_error_count.real;
+      offset += sizeof(this->mower_esc_error_count);
+      union {
         float real;
         uint32_t base;
       } u_mower_esc_temperature;
@@ -416,6 +453,17 @@ namespace mower_msgs
       u_mower_motor_rpm.base |= ((uint32_t) (*(inbuffer + offset + 3))) << (8 * 3);
       this->mower_motor_rpm = u_mower_motor_rpm.real;
       offset += sizeof(this->mower_motor_rpm);
+      union {
+        float real;
+        uint32_t base;
+      } u_mower_motor_power_watts;
+      u_mower_motor_power_watts.base = 0;
+      u_mower_motor_power_watts.base |= ((uint32_t) (*(inbuffer + offset + 0))) << (8 * 0);
+      u_mower_motor_power_watts.base |= ((uint32_t) (*(inbuffer + offset + 1))) << (8 * 1);
+      u_mower_motor_power_watts.base |= ((uint32_t) (*(inbuffer + offset + 2))) << (8 * 2);
+      u_mower_motor_power_watts.base |= ((uint32_t) (*(inbuffer + offset + 3))) << (8 * 3);
+      this->mower_motor_power_watts = u_mower_motor_power_watts.real;
+      offset += sizeof(this->mower_motor_power_watts);
       offset += this->blade_status_stamp.deserialize(inbuffer + offset);
       uint32_t length_firmware_version;
       arrToVar(length_firmware_version, (inbuffer + offset));
@@ -440,7 +488,7 @@ namespace mower_msgs
     }
 
     virtual const char * getType() override { return "mower_msgs/Status"; };
-    virtual const char * getMD5() override { return "746a7fa1b08970aca234773165ad6a27"; };
+    virtual const char * getMD5() override { return "42e3f306d086eea6c42c1784aefe9857"; };
 
   };
 

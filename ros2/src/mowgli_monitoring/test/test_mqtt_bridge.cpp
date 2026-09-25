@@ -108,10 +108,12 @@ TEST(SerialiseStatus, ProducesExpectedJson)
   msg.ui_board_available = true;
   msg.mow_enabled = false;
   msg.mower_esc_status = 2;
+  msg.mower_esc_error_count = 7;
   msg.mower_esc_temperature = 45.5f;
   msg.mower_esc_current = 1.25f;
   msg.mower_motor_temperature = 60.75f;
   msg.mower_motor_rpm = 3000.5f;
+  msg.mower_motor_power_watts = 38.7f;
 
   const std::string json = MqttBridgeNode::serialise_status(msg);
 
@@ -119,9 +121,10 @@ TEST(SerialiseStatus, ProducesExpectedJson)
             "{\"mower_status\":1,\"raspberry_pi_power\":true,\"is_charging\":false,"
             "\"esc_power\":true,\"rain_detected\":false,\"sound_module_available\":true,"
             "\"sound_module_busy\":false,\"ui_board_available\":true,\"mow_enabled\":false,"
-            "\"mower_esc_status\":2,\"mower_esc_temperature\":45.50,"
+            "\"mower_esc_status\":2,\"mower_esc_error_count\":7,"
+            "\"mower_esc_temperature\":45.50,"
             "\"mower_esc_current\":1.250,\"mower_motor_temperature\":60.75,"
-            "\"mower_motor_rpm\":3000.5}");
+            "\"mower_motor_rpm\":3000.5,\"mower_motor_power_watts\":38.7}");
 }
 
 // ===========================================================================

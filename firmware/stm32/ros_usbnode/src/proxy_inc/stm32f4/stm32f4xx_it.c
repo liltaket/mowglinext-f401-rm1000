@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "board.h"
 #include "main.h"
+#include "blademotor.h"
 #include "panel.h"
 #include "stm32f4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
@@ -273,7 +274,14 @@ void USART2_IRQHandler(void)
 void USART6_IRQHandler(void)
 {
   /* USER CODE BEGIN USART6_IRQn 0 */
-
+  if (__HAL_UART_GET_FLAG(&BLADEMOTOR_USART_Handler, UART_FLAG_ORE))
+  {
+    /* STM32F4 stops accepting RX data while ORE remains set. Clear it
+     * explicitly and let foreground restart DMA through the normal recovery
+     * path. */
+    __HAL_UART_CLEAR_OREFLAG(&BLADEMOTOR_USART_Handler);
+    BLADEMOTOR_OnUartError();
+  }
   /* USER CODE END USART6_IRQn 0 */
   HAL_UART_IRQHandler(&BLADEMOTOR_USART_Handler);
   /* USER CODE BEGIN USART6_IRQn 1 */

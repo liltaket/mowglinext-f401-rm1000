@@ -11,10 +11,16 @@ namespace mowgli_hardware
 
 constexpr float blade_current_amps(const LlBladeStatus& packet)
 {
-  // The legacy wire name is misleading: Yardforce 500/500B firmware forwards
-  // ESC UART bytes 9-10 unchanged, in milliamps. Match the ROS1 conversion to
-  // amperes; this field is not electrical power and must not be divided by volts.
+  // Every firmware target normalizes its controller-specific feedback to the
+  // shared wire contract: milliamps. The legacy field name is misleading.
   return static_cast<float>(packet.power_watts) / 1000.0f;
+}
+
+constexpr bool blade_telemetry_contract_compatible(const uint8_t protocol_version,
+                                                   const uint8_t active_flags)
+{
+  (void)active_flags;  // Optional v7 capabilities do not change wire compatibility.
+  return protocol_version == kMowgliProtocolVersion;
 }
 
 }  // namespace mowgli_hardware

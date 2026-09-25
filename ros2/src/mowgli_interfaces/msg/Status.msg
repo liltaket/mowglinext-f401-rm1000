@@ -38,10 +38,18 @@ float32 dig_escalated_distance_m
 float32 dig_escalated_required_distance_m
 
 uint8 mower_esc_status
+# Cumulative blade-controller UART/framing/fault-frame errors reported by the
+# STM32. This is not the PAC5223 fault byte; that byte is not yet preserved by
+# the current firmware wire packet.
+uint32 mower_esc_error_count
 float32 mower_esc_temperature
+# Blade-controller current in amperes. Controller-specific units are normalized
+# by the STM32 firmware before reaching the shared wire protocol.
 float32 mower_esc_current
 float32 mower_motor_temperature
 float32 mower_motor_rpm
+# Electrical blade power derived generically as mower_esc_current * v_system.
+float32 mower_motor_power_watts
 # Time of the most recent direct blade-controller report.  This differs from
 # `stamp`, which is refreshed for every mainboard status packet even when the
 # blade telemetry stream has stopped. A zero stamp means no report received.

@@ -1080,10 +1080,12 @@ std::string MqttBridgeNode::serialise_status(const mowgli_interfaces::msg::Statu
                 "\"ui_board_available\":%s,"
                 "\"mow_enabled\":%s,"
                 "\"mower_esc_status\":%u,"
+                "\"mower_esc_error_count\":%u,"
                 "\"mower_esc_temperature\":%.2f,"
                 "\"mower_esc_current\":%.3f,"
                 "\"mower_motor_temperature\":%.2f,"
-                "\"mower_motor_rpm\":%.1f"
+                "\"mower_motor_rpm\":%.1f,"
+                "\"mower_motor_power_watts\":%.1f"
                 "}",
                 static_cast<unsigned>(msg.mower_status),
                 msg.raspberry_pi_power ? "true" : "false",
@@ -1095,10 +1097,12 @@ std::string MqttBridgeNode::serialise_status(const mowgli_interfaces::msg::Statu
                 msg.ui_board_available ? "true" : "false",
                 msg.mow_enabled ? "true" : "false",
                 static_cast<unsigned>(msg.mower_esc_status),
+                static_cast<unsigned>(msg.mower_esc_error_count),
                 static_cast<double>(msg.mower_esc_temperature),
                 static_cast<double>(msg.mower_esc_current),
                 static_cast<double>(msg.mower_motor_temperature),
-                static_cast<double>(msg.mower_motor_rpm));
+                static_cast<double>(msg.mower_motor_rpm),
+                static_cast<double>(msg.mower_motor_power_watts));
   return std::string{buf};
 }
 

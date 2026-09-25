@@ -149,6 +149,7 @@ static const char* high_level_mode_name(const uint8_t mode)
 #include "mowgli_interfaces/msg/absolute_pose.hpp"
 #include "mowgli_interfaces/msg/dig_event.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
+#include "mowgli_interfaces/msg/esc_status.hpp"
 #include "mowgli_interfaces/msg/gnss_status.hpp"
 #include "mowgli_interfaces/msg/high_level_status.hpp"
 #include "mowgli_interfaces/msg/power.hpp"
@@ -1514,7 +1515,16 @@ private:
     LlStatus pkt{};
     std::memcpy(&pkt, data, sizeof(LlStatus));
 
+    latest_system_voltage_ = pkt.v_system;
+    blade_power_watts_ =
+        latest_system_voltage_ > 0.0f ? blade_esc_current_ * latest_system_voltage_ : 0.0f;
+
     const auto stamp = now();
+    const double blade_age_s = blade_status_time_.nanoseconds() > 0
+                                   ? (stamp - blade_status_time_).seconds()
+                                   : std::numeric_limits<double>::infinity();
+    const bool blade_telemetry_fresh =
+        blade_age_s >= 0.0 && blade_age_s <= kBladeTelemetryTimeoutSec;
 
     // ---- Status message ----
     {
@@ -1593,15 +1603,23 @@ private:
       // diagnostics expectations. It reflects blade-controller activity, not a
       // traction PAC5210 power/arm state (the STM32 status packet does not
       // currently report that signal).
-      msg.esc_power = mow_enabled_ || blade_active_;
+      msg.esc_power = mow_enabled_ || (blade_telemetry_fresh && blade_active_);
       // Blade motor fields from live telemetry
       msg.mow_enabled = mow_enabled_;
       msg.firmware_debug_enabled = firmware_debug_enabled_;
-      msg.mower_esc_status = blade_active_ ? 1u : 0u;
-      msg.mower_motor_rpm = blade_rpm_;
+      // Status.msg historically uses 0 for off. When active, publish the
+      // interface-defined value so Diagnostics does not render the old raw
+      // boolean value 1 as an unknown ESC status.
+      msg.mower_esc_status =
+          !blade_telemetry_fresh
+              ? mowgli_interfaces::msg::ESCStatus::ESC_STATUS_DISCONNECTED
+              : (blade_active_ ? mowgli_interfaces::msg::ESCStatus::ESC_STATUS_RUNNING : 0u);
+      msg.mower_esc_error_count = blade_error_count_;
+      msg.mower_motor_rpm = blade_telemetry_fresh ? blade_rpm_ : 0.0f;
       msg.blade_status_stamp = blade_status_time_;
-      msg.mower_motor_temperature = blade_temperature_;
-      msg.mower_esc_current = blade_esc_current_;
+      msg.mower_motor_temperature = blade_telemetry_fresh ? blade_temperature_ : 0.0f;
+      msg.mower_esc_current = blade_telemetry_fresh ? blade_esc_current_ : 0.0f;
+      msg.mower_motor_power_watts = blade_telemetry_fresh ? blade_power_watts_ : 0.0f;
       // Firmware version handshake result (image <-> firmware compatibility).
       msg.firmware_version = fw_version_str_;
       msg.firmware_protocol_version = fw_protocol_version_;
@@ -2814,7 +2832,10 @@ private:
     blade_rpm_ = static_cast<float>(pkt.rpm);
     blade_status_time_ = now();
     blade_temperature_ = pkt.temperature;
+    blade_error_count_ = pkt.error_count;
     blade_esc_current_ = blade_current_amps(pkt);
+    blade_power_watts_ =
+        latest_system_voltage_ > 0.0f ? blade_esc_current_ * latest_system_voltage_ : 0.0f;
   }
 
   // ---------------------------------------------------------------------------
@@ -2846,7 +2867,7 @@ private:
     fw_handshake_done_ = true;
     // The wire-protocol version is the compatibility key: an image built for
     // protocol vN can only correctly parse/command firmware of the same vN.
-    fw_compatible_ = (fw_protocol_version_ == kMowgliProtocolVersion);
+    fw_compatible_ = blade_telemetry_contract_compatible(fw_protocol_version_, pkt.active_flags);
 
     char ver[16];
     snprintf(ver,
@@ -2866,6 +2887,14 @@ private:
                   fw_version_str_.c_str(),
                   static_cast<unsigned>(fw_protocol_version_),
                   static_cast<unsigned>(kMowgliProtocolVersion));
+    }
+    else if (legacy_blade_power_encoding && version_changed)
+    {
+      RCLCPP_ERROR(get_logger(),
+                   "INCOMPATIBLE FIRMWARE: firmware v%s uses the transitional raw "
+                   "RM1000 blade-power encoding. Reflash the STM32 firmware; mowing is "
+                   "blocked to prevent deciwatts from being interpreted as milliamps.",
+                   fw_version_str_.c_str());
     }
     else if (!fw_compatible_ && version_changed)
     {
@@ -2902,6 +2931,13 @@ private:
     fw_compatible_ = false;
     fw_protocol_version_ = 0u;
     fw_version_str_.clear();
+    blade_active_ = false;
+    blade_rpm_ = 0.0f;
+    blade_status_time_ = rclcpp::Time{0, 0, RCL_ROS_TIME};
+    blade_temperature_ = 0.0f;
+    blade_power_watts_ = 0.0f;
+    blade_esc_current_ = 0.0f;
+    blade_error_count_ = 0u;
     config_req_resend_count_ = 5;
     config_control_resend_count_ = 0;
     fw_handshake_start_ = now();
@@ -3917,6 +3953,7 @@ private:
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr min_lin_vel_cb_handle_;
   bool mow_enabled_{false};
   bool is_charging_{false};
+  float latest_system_voltage_{0.0f};
   uint8_t current_mode_{0};
   std::string current_mode_state_name_{"UNSET"};
   uint8_t last_sent_mode_{255};
@@ -3931,11 +3968,14 @@ private:
   static constexpr double kChargingAnchorWindowSec = 5.0;
 
   // Blade motor state (updated from LlBladeStatus packets)
+  static constexpr double kBladeTelemetryTimeoutSec = 1.0;
   bool blade_active_{false};
   float blade_rpm_{0.0f};
   rclcpp::Time blade_status_time_{0, 0, RCL_ROS_TIME};
   float blade_temperature_{0.0f};
   float blade_esc_current_{0.0f};
+  float blade_power_watts_{0.0f};
+  uint32_t blade_error_count_{0u};
   uint8_t last_reset_cause_{RESET_CAUSE_UNKNOWN};
   std::string last_reset_cause_name_{"UNKNOWN"};
   bool reset_cause_seen_{false};

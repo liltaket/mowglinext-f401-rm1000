@@ -568,7 +568,7 @@ int main(void)
 #if (DEBUG_TYPE != DEBUG_TYPE_UART) && (OPTION_ULTRASONIC == 1)
   NBT_init(&main_ultrasonicsensor_nbt, 50);
 #endif
-  NBT_init(&main_blademotor_nbt, 100);
+  NBT_init(&main_blademotor_nbt, BLADEMOTOR_POLL_INTERVAL_MS);
   NBT_init(&main_drivemotor_nbt, 20);
   NBT_init(&main_wdg_nbt, 10);
   NBT_init(&main_buzzer_nbt, 200);
@@ -1273,9 +1273,25 @@ void vprint(const char *fmt, va_list argp)
   if (0 < vsnprintf(string, sizeof(string), fmt, argp)) // build string
   {
 #if DEBUG_TYPE == DEBUG_TYPE_SWO
-    for (int i = 0; i < strlen(string); i++)
+    /* CMSIS ITM_SendChar() waits indefinitely while an enabled stimulus port
+     * is not ready.  OpenOCD target examination enables ITM port 0 even when
+     * trace I/O itself is disabled, leaving no path that can drain the port.
+     * Require an explicitly enabled trace pin and keep output best-effort:
+     * emit only while port 0 is immediately writable and drop the rest on
+     * backpressure. */
+    if (((DBGMCU->CR & DBGMCU_CR_TRACE_IOEN) != 0UL) &&
+        ((ITM->TCR & ITM_TCR_ITMENA_Msk) != 0UL) &&
+        ((ITM->TER & 1UL) != 0UL))
     {
-      ITM_SendChar(string[i]);
+      const size_t length = strlen(string);
+      for (size_t i = 0; i < length; i++)
+      {
+        if (ITM->PORT[0U].u32 == 0UL)
+        {
+          break;
+        }
+        ITM->PORT[0U].u8 = (uint8_t)string[i];
+      }
     }
 #elif DEBUG_TYPE == DEBUG_TYPE_UART
 #if BOARD_YARDFORCE500_VARIANT_ORIG
@@ -1408,6 +1424,12 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   {
     DRIVEMOTOR_OnUartError();
   }
+#ifdef PANEL_USART_ENABLED
+  else if (huart->Instance == PANEL_USART_INSTANCE)
+  {
+    PANEL_OnUartError();
+  }
+#endif
 }
 
 /*
