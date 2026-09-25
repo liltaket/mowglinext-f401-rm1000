@@ -8,6 +8,8 @@
 using mowgli_cmd_vel::SafetyState;
 using mowgli_cmd_vel::apply_safety;
 
+void run_charger_safety_tests();
+
 static void test_finite_and_zero_are_accepted()
 {
   SafetyState state{3.0f, 1.0f, -1.0f, 10u};
@@ -144,5 +146,6 @@ int main()
   RUN_TEST(test_imu_mount_rotation_identity_preserves_all_axes);
   RUN_TEST(test_imu_mount_rotation_yaw_180_negates_x_y_only);
   RUN_TEST(test_configured_mount_maps_accel_and_gyro_basis_vectors);
+  run_charger_safety_tests();
   return UNITY_END();
 }
