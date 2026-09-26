@@ -95,6 +95,32 @@ static void test_motor_link_requires_fresh_zero_after_recovery()
       state, true, 4u, true, true, 0u, 0u, true));
 }
 
+static void test_rearm_clear_validation_runs_only_on_transition()
+{
+  TEST_ASSERT_TRUE(
+      mowgli_motor_safety::link_rearm_clear_transition(true, false));
+  TEST_ASSERT_FALSE(
+      mowgli_motor_safety::link_rearm_clear_transition(false, false));
+  TEST_ASSERT_FALSE(
+      mowgli_motor_safety::link_rearm_clear_transition(true, true));
+
+  mowgli_motor_safety::LinkRearmState state{false, 4u, 2u, 3u};
+  /* A normal blade-on / motion phase is not itself a link fault and must keep
+   * the already-cleared re-arm state cleared. */
+  TEST_ASSERT_FALSE(mowgli_motor_safety::update_link_rearm(
+      state, true, 4u, false, false, 2u, 3u, false));
+  TEST_ASSERT_FALSE(state.required);
+
+  /* A new link fault still re-latches the gate and requires a newer zero/off. */
+  TEST_ASSERT_TRUE(mowgli_motor_safety::update_link_rearm(
+      state, false, 4u, false, false, 3u, 3u, true));
+  TEST_ASSERT_TRUE(state.required);
+  TEST_ASSERT_TRUE(mowgli_motor_safety::update_link_rearm(
+      state, true, 4u, true, true, 3u, 3u, true));
+  TEST_ASSERT_FALSE(mowgli_motor_safety::update_link_rearm(
+      state, true, 5u, true, true, 3u, 3u, true));
+}
+
 static void test_idle_zero_can_complete_safe_motor_link_rearm()
 {
   mowgli_motor_safety::LinkRearmState state{};
@@ -483,6 +509,7 @@ int main()
   RUN_TEST(test_blade_on_received_during_latch_is_not_deferred);
   RUN_TEST(test_blade_on_during_link_rearm_is_not_deferred);
   RUN_TEST(test_motor_link_requires_fresh_zero_after_recovery);
+  RUN_TEST(test_rearm_clear_validation_runs_only_on_transition);
   RUN_TEST(test_idle_zero_can_complete_safe_motor_link_rearm);
   RUN_TEST(test_motor_link_fault_requires_new_zero_and_blade_off);
   RUN_TEST(test_zero_host_intent_suppresses_yaw_invented_targets);

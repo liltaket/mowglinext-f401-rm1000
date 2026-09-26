@@ -37,6 +37,13 @@ inline bool update_link_rearm(LinkRearmState &state, bool links_healthy,
   return state.required;
 }
 
+// The host zero/off snapshot is required only when re-arm has just completed.
+// Once armed, normal drive or blade intent must not re-latch the startup gate.
+inline bool link_rearm_clear_transition(bool was_required,
+                                        bool is_required) {
+  return was_required && !is_required;
+}
+
 struct WheelTargets {
   float left_mps;
   float right_mps;

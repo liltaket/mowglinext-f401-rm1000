@@ -47,6 +47,7 @@ add_executable(behavior_tree_node
   src/navigation_nodes.cpp
   src/docking_nodes.cpp
   src/escape_nodes.cpp
+  src/manual_mow_nodes.cpp
   src/calibration_nodes.cpp
   src/status_nodes.cpp
   src/status_snapshot.cpp
@@ -828,6 +829,31 @@ if(BUILD_TESTING)
     ${tf2_TARGETS}
     ${tf2_ros_TARGETS}
     ${tf2_geometry_msgs_TARGETS}
+  )
+
+  # The manual-mow blade start is gated on acknowledged OFF, a fresh firmware
+  # inactive sample and an exact-zero re-arm prelude. Its service response is
+  # not treated as proof of rotation; RPM telemetry confirms start.
+  ament_add_ros_isolated_gtest(test_manual_mow_blade_start
+    test/test_manual_mow_blade_start.cpp
+    src/manual_mow_nodes.cpp
+    src/status_snapshot.cpp
+  )
+
+  target_include_directories(test_manual_mow_blade_start PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  target_compile_definitions(test_manual_mow_blade_start PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
+  )
+
+  target_link_libraries(test_manual_mow_blade_start
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${geometry_msgs_TARGETS}
   )
 
   # ---- test_guard_fallthrough ----
