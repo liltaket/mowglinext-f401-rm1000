@@ -163,10 +163,17 @@ func persistAreas(ctx context.Context, provider types.IRosProvider) error {
 //     that failed too, map_server holds a partial map and the error says so;
 //   - only save_areas failed          → the NEW map is live but not on disk.
 func replaceMapInternal(ctx context.Context, provider types.IRosProvider, req *mowgli.ReplaceMapReq) error {
+	return replaceMapInternalWithLockWait(ctx, provider, req, nil)
+}
+
+// replaceMapInternalWithLockWait exposes the point where a caller encounters a
+// held transaction lock so concurrency tests can coordinate that boundary
+// without timing assumptions. Production callers pass no callback.
+func replaceMapInternalWithLockWait(ctx context.Context, provider types.IRosProvider, req *mowgli.ReplaceMapReq, onWait func()) error {
 	if req == nil {
 		return errors.New("replaceMapInternal: nil request")
 	}
-	if err := lockMapReplacement(ctx); err != nil {
+	if err := lockMapReplacement(ctx, onWait); err != nil {
 		return fmt.Errorf("replace map: waiting for another map replacement: %w", err)
 	}
 	defer unlockMapReplacement()
@@ -185,22 +192,29 @@ func replaceMapInternal(ctx context.Context, provider types.IRosProvider, req *m
 	return nil
 }
 
-func lockMapReplacement(ctx context.Context) error {
+func lockMapReplacement(ctx context.Context, onWait func()) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	select {
 	case mapReplacementLock <- struct{}{}:
-		// The context may have expired at the same time the lock became
-		// available. Do not start a transaction after its caller has left.
-		if err := ctx.Err(); err != nil {
-			<-mapReplacementLock
-			return err
+	default:
+		if onWait != nil {
+			onWait()
 		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+		select {
+		case mapReplacementLock <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	// The context may have expired at the same time the lock became
+	// available. Do not start a transaction after its caller has left.
+	if err := ctx.Err(); err != nil {
+		<-mapReplacementLock
+		return err
+	}
+	return nil
 }
 
 func unlockMapReplacement() {

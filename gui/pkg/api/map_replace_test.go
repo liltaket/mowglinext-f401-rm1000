@@ -93,17 +93,6 @@ func (f *fakeMapServer) failNth(service string, n int, err error) {
 
 type mapReplacementTestContextKey struct{}
 
-type lockWaitObservedContext struct {
-	context.Context
-	errChecked chan struct{}
-	once       sync.Once
-}
-
-func (c *lockWaitObservedContext) Err() error {
-	c.once.Do(func() { close(c.errChecked) })
-	return c.Context.Err()
-}
-
 type mapReplacementCall struct {
 	transaction string
 	service     string
@@ -286,23 +275,18 @@ func TestReplaceMap_SerializesConcurrentReplacementThroughRollback(t *testing.T)
 	// A has already cleared the old map and added only a1. Its next add fails,
 	// which makes it restore the older snapshot. B must not save its map before
 	// that rollback completes, or A would later overwrite B with the stale copy.
-	ctxB := &lockWaitObservedContext{
-		Context:    context.WithValue(context.Background(), mapReplacementTestContextKey{}, "B"),
-		errChecked: make(chan struct{}),
-	}
+	ctxB := context.WithValue(context.Background(), mapReplacementTestContextKey{}, "B")
 	bDone := make(chan error, 1)
-	bStarted := make(chan struct{})
+	bWaiting := make(chan struct{})
 	go func() {
-		close(bStarted)
-		bDone <- replaceMapInternal(ctxB, server, requestB)
+		bDone <- replaceMapInternalWithLockWait(ctxB, server, requestB, func() { close(bWaiting) })
 	}()
-	<-bStarted
 
 	var earlyBErr error
 	bFinishedBeforeARelease := false
 	select {
-	case <-ctxB.errChecked:
-		// The context-aware lock has reached its wait while A is paused.
+	case <-bWaiting:
+		// The try-send observed A's held token immediately before this wait.
 	case earlyBErr = <-bDone:
 		bFinishedBeforeARelease = true
 	case <-time.After(5 * time.Second):
@@ -381,17 +365,17 @@ func TestReplaceMap_CanceledWaitDoesNotTouchMapServer(t *testing.T) {
 		t.Fatal("replacement A did not reach its first add_area call")
 	}
 
-	baseB, cancelB := context.WithCancel(context.WithValue(context.Background(), mapReplacementTestContextKey{}, "B"))
+	ctxB, cancelB := context.WithCancel(context.WithValue(context.Background(), mapReplacementTestContextKey{}, "B"))
 	defer cancelB()
-	ctxB := &lockWaitObservedContext{Context: baseB, errChecked: make(chan struct{})}
+	bWaiting := make(chan struct{})
 	bDone := make(chan error, 1)
 	go func() {
-		bDone <- replaceMapInternal(ctxB, server, &mowgli.ReplaceMapReq{
+		bDone <- replaceMapInternalWithLockWait(ctxB, server, &mowgli.ReplaceMapReq{
 			Areas: []mowgli.ReplaceMapArea{testArea("b", 0)},
-		})
+		}, func() { close(bWaiting) })
 	}()
 	select {
-	case <-ctxB.errChecked:
+	case <-bWaiting:
 	case <-time.After(5 * time.Second):
 		releaseFirstAdd()
 		<-aDone
