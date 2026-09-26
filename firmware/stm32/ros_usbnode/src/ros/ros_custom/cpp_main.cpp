@@ -922,16 +922,21 @@ extern "C" void motors_handler() {
         ActuatorAuthorization_DriveRequestIsCurrent(
             snap_cmd_vel_authorization_epoch);
 
+    const bool link_rearm_was_required = motor_link_rearm_required != 0u;
     motor_link_rearm_required = mowgli_motor_safety::update_link_rearm(
         motor_link_rearm_state, links_healthy, snap_zero_phase,
         snap_zero_intent, snap_target_blade == 0u, drive_fault_sequence,
         blade_fault_sequence, link_inhibited);
     if (motor_link_rearm_required != 0u) {
       MOTORLINK_ForceInhibit();
-    } else {
+    } else if (mowgli_motor_safety::link_rearm_clear_transition(
+                   link_rearm_was_required,
+                   motor_link_rearm_required != 0u)) {
       /* Close the race with a UART fault or a host update between the snapshot
-       * and inhibit clear. The source links must still be healthy and no newer
-       * zero/off intent may have arrived. */
+       * and inhibit clear, but only on the required -> armed transition.
+       * Once armed, normal drive/blade requests must not be treated as a new
+       * re-arm failure; link faults are detected by update_link_rearm and the
+       * final output gate below. */
       const uint32_t primask = __get_PRIMASK();
       __disable_irq();
       const bool still_healthy = DRIVEMOTOR_FeedbackHealthy() &&
