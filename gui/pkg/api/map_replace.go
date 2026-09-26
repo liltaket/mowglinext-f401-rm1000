@@ -44,6 +44,11 @@ const (
 	maxSnapshotAreas = 512
 )
 
+// mapReplacementLock serializes the GUI's full read/replace/persist/rollback
+// transaction. A channel-backed lock lets a request stop waiting when its
+// caller context expires.
+var mapReplacementLock = make(chan struct{}, 1)
+
 // triggerRes decodes a std_srvs/srv/Trigger response. The generated
 // mowgli.ClearMapRes has no message field, which is where map_server explains
 // a refused save ("Save failed: …").
@@ -161,6 +166,11 @@ func replaceMapInternal(ctx context.Context, provider types.IRosProvider, req *m
 	if req == nil {
 		return errors.New("replaceMapInternal: nil request")
 	}
+	if err := lockMapReplacement(ctx); err != nil {
+		return fmt.Errorf("replace map: waiting for another map replacement: %w", err)
+	}
+	defer unlockMapReplacement()
+
 	previous, err := snapshotMap(ctx, provider)
 	if err != nil {
 		return fmt.Errorf("replace map: could not read the current map, so nothing was changed: %w", err)
@@ -173,6 +183,28 @@ func replaceMapInternal(ctx context.Context, provider types.IRosProvider, req *m
 		return fmt.Errorf("replace map: the new map is live but was NOT written to disk and will be lost at the next restart — check free space on the robot, then save again: %w", err)
 	}
 	return nil
+}
+
+func lockMapReplacement(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case mapReplacementLock <- struct{}{}:
+		// The context may have expired at the same time the lock became
+		// available. Do not start a transaction after its caller has left.
+		if err := ctx.Err(); err != nil {
+			<-mapReplacementLock
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func unlockMapReplacement() {
+	<-mapReplacementLock
 }
 
 // restorePreviousMap puts the snapshot back after a failed replace and
