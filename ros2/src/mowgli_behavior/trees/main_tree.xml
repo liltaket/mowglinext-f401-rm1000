@@ -1393,29 +1393,21 @@
              Teleop via /cmd_vel_teleop (twist_mux priority).
              Collision_monitor remains active. GPS/SLAM continues.
 
-             Blade is enabled here by the BT (not the GUI) because the
-             firmware forcibly zeroes target_blade_on_off whenever its
-             mirrored HL mode is IDLE/NULL (cpp_main.cpp on_hl_state).
-             The GUI used to send mow_enabled=1 immediately after
-             Command=7, but the firmware had not yet received the
-             MANUAL_MOWING mode update, so it zeroed the blade. Driving
-             the blade on AFTER PublishHighLevelStatus(4) guarantees the
-             firmware sees MANUAL_MOWING first, then the blade command.
+             ManualMowBladeStart requests blade OFF, publishes IDLE, and holds
+             the highest-priority emergency lane at exact zero until a newer
+             inactive/0-RPM report and at least 750 ms of re-arm have passed.
+             Firmware only observes that re-arm phase in IDLE. The action then
+             publishes MANUAL_MOWING, waits for mode propagation, requests ON,
+             and does not release the zero lane until fresh telemetry reports
+             active RPM. Missing/stale confirmation latches OFF and zero for
+             this command; it does not retry at every BT tick.
 
-             ReactiveSequence is used deliberately: on every tick it
-             re-evaluates IsCommand from the first child, even while
-             WaitForDuration is running. When the user presses Home
-             (command changes from 7 to 2), IsCommand returns FAILURE,
-             the ReactiveSequence halts WaitForDuration and returns
-             FAILURE, allowing the Fallback to select HomeSequence on
-             the very next tick. On exit, the following sequence (Home
-             or Idle) calls SetMowerEnabled(false) which stops the blade.
+             ReactiveSequence rechecks IsCommand while the stateful action is
+             RUNNING, so a new command halts it and its onHalted path sends OFF.
              ============================================================ -->
         <ReactiveSequence name="ManualMowingSequence">
           <IsCommand command="7"/>
-          <PublishHighLevelStatus state="4" state_name="MANUAL_MOWING"/>
-          <SetMowerEnabled enabled="true"/>
-          <WaitForDuration duration_sec="0.5"/>
+          <ManualMowBladeStart/>
         </ReactiveSequence>
 
         <!-- ============================================================
