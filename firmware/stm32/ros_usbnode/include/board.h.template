@@ -24,7 +24,7 @@ extern "C"
 {{if eq .BoardType "BOARD_YARDFORCE500B"}}
     #define BOARD_YARDFORCE500_VARIANT_B 1
 {{end}}
-{{if eq .BoardType "BOARD_BILTEMA_RM1000"}}
+{{if or (eq .BoardType "BOARD_BILTEMA_RM1000") (eq .BoardType "BOARD_BILTEMA_RM1000_MPU6050_YAW180")}}
     #define BOARD_YARDFORCE500_VARIANT_B 1
     #define BOARD_BILTEMA_RM1000 1
 {{end}}

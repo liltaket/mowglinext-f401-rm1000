@@ -160,13 +160,7 @@ func (fp *FirmwareProvider) flashMowgli(writer io.Writer, config types.FirmwareC
 	_, _ = writer.Write([]byte("------> board.h built\n"))
 	//Build firmware
 	_, _ = writer.Write([]byte("------> Building firmware...\n"))
-	pioEnv := "Yardforce500"
-	switch config.BoardType {
-	case "BOARD_YARDFORCE500B":
-		pioEnv = "Yardforce500B"
-	case "BOARD_LUV1000RI":
-		pioEnv = "LUV1000RI"
-	}
+	pioEnv := pioEnvironmentForBoard(config.BoardType)
 	// BUILD ONLY — deliberately not `-t upload`. PlatformIO's uploader forces
 	// `transport select swd`, which excludes ST-Link V2 dongles without recent
 	// firmware; see openocdProgramCmd. Expert mode exists to compile a custom
@@ -199,6 +193,21 @@ func (fp *FirmwareProvider) flashMowgli(writer io.Writer, config types.FirmwareC
 	}
 	_, _ = writer.Write([]byte("------> Firmware flashed and byte-verified\n"))
 	return nil
+}
+
+func pioEnvironmentForBoard(board string) string {
+	switch board {
+	case "BOARD_YARDFORCE500B":
+		return "Yardforce500B"
+	case "BOARD_BILTEMA_RM1000":
+		return "BiltemaRM1000"
+	case "BOARD_BILTEMA_RM1000_MPU6050_YAW180":
+		return "BiltemaRM1000_MPU6050_Yaw180"
+	case "BOARD_LUV1000RI":
+		return "LUV1000RI"
+	default:
+		return "Yardforce500"
+	}
 }
 
 var safeShellArgRe = regexp.MustCompile(`^[a-zA-Z0-9._:/-]+$`)
@@ -278,11 +287,11 @@ func openocdProgramCmd(board, programArg string) string {
 }
 
 // openocdTargetCfg maps a board to its OpenOCD target config. YardForce 500 is a
-// STM32F103 (f1x); the 500B is a STM32F401 (f4x). Different MCU family = different
-// target cfg, so flashing with the wrong one simply fails — itself a guard.
+// STM32F103 (f1x); 500B and both RM1000 profiles use STM32F401 (f4x). A wrong
+// MCU-family target fails to connect, which is an additional guard.
 func openocdTargetCfg(board string) string {
 	switch board {
-	case "BOARD_YARDFORCE500B":
+	case "BOARD_YARDFORCE500B", "BOARD_BILTEMA_RM1000", "BOARD_BILTEMA_RM1000_MPU6050_YAW180":
 		return "target/stm32f4x.cfg"
 	default:
 		return "target/stm32f1x.cfg"

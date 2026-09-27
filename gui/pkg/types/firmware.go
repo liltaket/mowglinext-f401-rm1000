@@ -38,6 +38,8 @@ type FirmwareConfig struct {
 	// by the GUI.
 	BoardTypeOrigin                string  `json:"boardTypeOrigin,omitempty"`
 	PanelTypeOrigin                string  `json:"panelTypeOrigin,omitempty"`
+	TickPerMOrigin                  string  `json:"tickPerMOrigin,omitempty"`
+	WheelBaseOrigin                 string  `json:"wheelBaseOrigin,omitempty"`
 	FirmwareSelectionModel         string  `json:"firmwareSelectionModel,omitempty"`
 	// FirmwareSource is the GUI dropdown selector: "custom" compiles from
 	// source (the expert path), "prebuilt" (or empty, for older payloads)

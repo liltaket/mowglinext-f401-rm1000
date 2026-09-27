@@ -2193,6 +2193,10 @@
       "label": "YardForce 500B",
       "description": "500 B variant with different blade motor UART and panel layout."
     },
+    "BiltemaRM1000": {
+      "label": "Biltema RM1000",
+      "description": "RM-MB V6.1 STM32F401 with the Yardforce 900 ECO panel and this robot's recorded drive calibration."
+    },
     "YardForceSA650": {
       "label": "YardForce SA650",
       "description": "Larger model (570x390mm) with higher encoder resolution."
