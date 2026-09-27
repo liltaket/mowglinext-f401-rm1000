@@ -2179,6 +2179,10 @@
       "label": "YardForce 500B",
       "description": "Variante 500 B avec un UART de moteur de lame et une disposition de panneau différents."
     },
+    "BiltemaRM1000": {
+      "label": "Biltema RM1000",
+      "description": "Carte RM-MB V6.1 STM32F401 avec panneau Yardforce 900 ECO et calibration de conduite enregistrée pour ce robot."
+    },
     "YardForceSA650": {
       "label": "YardForce SA650",
       "description": "Modèle plus grand (570x390 mm) avec une résolution d'encodeur supérieure."
