@@ -121,15 +121,36 @@ func TestOpenocdProgramCmdForcesNoTransport(t *testing.T) {
 	}
 }
 
-// A wrong target cfg simply fails to flash, which is itself a guard — but only
-// if the mapping is right in the first place. The 500 is an STM32F103, the
-// 500B an STM32F401.
+// A wrong target cfg fails to connect, which is itself a guard — but only if
+// the mapping is right in the first place. The 500 is an STM32F103; the 500B
+// and RM1000 profiles are STM32F401.
 func TestOpenocdProgramCmdPicksTheBoardTarget(t *testing.T) {
 	if got := openocdProgramCmd("BOARD_YARDFORCE500B", "/tmp/f.elf"); !strings.Contains(got, "target/stm32f4x.cfg") {
 		t.Errorf("500B is an STM32F401 and needs stm32f4x.cfg: %s", got)
 	}
+	if got := openocdProgramCmd("BOARD_BILTEMA_RM1000", "/tmp/f.elf"); !strings.Contains(got, "target/stm32f4x.cfg") {
+		t.Errorf("RM1000 is an STM32F401 and needs stm32f4x.cfg: %s", got)
+	}
+	if got := openocdProgramCmd("BOARD_BILTEMA_RM1000_MPU6050_YAW180", "/tmp/f.elf"); !strings.Contains(got, "target/stm32f4x.cfg") {
+		t.Errorf("RM1000 yaw180 is an STM32F401 and needs stm32f4x.cfg: %s", got)
+	}
 	if got := openocdProgramCmd("BOARD_YARDFORCE500", "/tmp/f.elf"); !strings.Contains(got, "target/stm32f1x.cfg") {
 		t.Errorf("500 is an STM32F103 and needs stm32f1x.cfg: %s", got)
+	}
+}
+
+func TestPioEnvironmentForBoard(t *testing.T) {
+	cases := map[string]string{
+		"BOARD_YARDFORCE500":                        "Yardforce500",
+		"BOARD_YARDFORCE500B":                       "Yardforce500B",
+		"BOARD_BILTEMA_RM1000":                      "BiltemaRM1000",
+		"BOARD_BILTEMA_RM1000_MPU6050_YAW180":        "BiltemaRM1000_MPU6050_Yaw180",
+		"BOARD_LUV1000RI":                           "LUV1000RI",
+	}
+	for board, want := range cases {
+		if got := pioEnvironmentForBoard(board); got != want {
+			t.Errorf("pioEnvironmentForBoard(%q) = %q, want %q", board, got, want)
+		}
 	}
 }
 

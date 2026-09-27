@@ -66,7 +66,10 @@ and [`stm32/panel_firmware/`](stm32/panel_firmware).
 The GUI setup page is the recommended path. Its default ("prebuilt") downloads the binary matching
 your board from the latest GitHub release manifest, verifies its sha256, flashes it and then
 re-reads the protocol version from the board — no toolchain, no compile. The "custom" option is the
-expert path: it clones a branch, renders `board.h.template` and runs `platformio run -t upload`.
+expert path: it clones a branch, renders `board.h.template`, builds the matching PlatformIO
+environment, then flashes the image with OpenOCD and verifies it. The Biltema RM1000 is available
+on this source-build path; it has no release-manifest prebuilt yet, so the prebuilt option remains
+unavailable for that profile.
 
 With an ST-Link directly:
 
@@ -104,10 +107,17 @@ There are no firmware-side unit tests. Behaviour is pinned by the host mirror
 
 - YardForce Classic 500 — env `Yardforce500` (STM32F103VCT6), the default
 - YardForce Classic 500B — env `Yardforce500B` (STM32F401VC)
+- Biltema RM1000, RM-MB V6.1 — env `BiltemaRM1000` (STM32F401VC, Yardforce 900 ECO panel,
+  sequenced blade startup). `BiltemaRM1000_MPU6050_Yaw180` is the same target with a 180° Z
+  transform for the external IMU; choose it only when the sensor is mounted that way.
 
 `BOARD_LUV1000RI` exists in `board.h` / `board.h.template` and the GUI offers the board, but
 `platformio.ini` has **no `LUV1000RI` env** — the target MCU/clock and the LUV blade-motor UART
 wiring are not in the repo. Do not add a guessed env; a wrong pinout can brick the board.
+
+The RM1000 environment builds in CI, but its exact profile has not been published as a prebuilt
+release artifact. See [the RM1000 profile record](../docs/lab/RM1000-PROFILE.md) for host-side
+values captured from Bruno's working robot and the validation boundary.
 
 ## Working on this tree
 

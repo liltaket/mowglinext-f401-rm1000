@@ -1,24 +1,27 @@
 /**
  * Firmware targets that are safe to infer from the selected mower model.
  *
- * These are only the fields that can be safely inferred from the published
- * firmware permutations in firmware/scripts/package_release.py. Models
- * without an unambiguous published mapping are intentionally absent: the
- * firmware flashing UI must not guess for them.
+ * These are fields with a defined board/panel or robot-specific starting
+ * profile. RM1000 is source-build-only today and its calibration belongs to
+ * this robot, not every mower sharing the chassis.
  */
 export type FirmwareSelection = {
     boardType?: string;
     panelType?: string;
-    /** Persisted provenance for the two independently editable fields. */
+    tickPerM?: number;
+    wheelBase?: number;
+    /** Persisted provenance for each independently editable field. */
     boardTypeOrigin?: FirmwareFieldOrigin;
     panelTypeOrigin?: FirmwareFieldOrigin;
+    tickPerMOrigin?: FirmwareFieldOrigin;
+    wheelBaseOrigin?: FirmwareFieldOrigin;
     /** Mower model whose automatic defaults were last applied. */
     firmwareSelectionModel?: string;
 };
 
 export type FirmwareFieldOrigin = "auto" | "manual" | "legacy";
 
-export type FirmwareModelDefaults = Readonly<Pick<FirmwareSelection, "boardType" | "panelType">>;
+export type FirmwareModelDefaults = Readonly<Pick<FirmwareSelection, "boardType" | "panelType" | "tickPerM" | "wheelBase">>;
 
 export const FIRMWARE_MODEL_DEFAULTS: Readonly<Record<string, FirmwareModelDefaults>> = {
     YardForce500: {
@@ -31,6 +34,12 @@ export const FIRMWARE_MODEL_DEFAULTS: Readonly<Record<string, FirmwareModelDefau
         boardType: "BOARD_YARDFORCE500B",
         panelType: "PANEL_TYPE_YARDFORCE_500B_CLASSIC",
     },
+    BiltemaRM1000: {
+        boardType: "BOARD_BILTEMA_RM1000_MPU6050_YAW180",
+        panelType: "PANEL_TYPE_YARDFORCE_900_ECO",
+        tickPerM: 331.6,
+        wheelBase: 0.325,
+    },
 };
 
 export const firmwareDefaultsForModel = (
@@ -41,9 +50,8 @@ export const firmwareDefaultsForModel = (
 };
 
 /**
- * Apply only inferred board/panel fields. Other firmware settings are returned
- * untouched, and a field marked as manually overridden is left untouched even
- * when the mower model changes.
+ * Apply each model-specific field that follows the selected model. Unrelated
+ * settings and fields explicitly changed by the user remain untouched.
  */
 export const applyFirmwareModelDefaults = <T extends FirmwareSelection>(
     mowerModel: unknown,
@@ -57,6 +65,8 @@ export const applyFirmwareModelDefaults = <T extends FirmwareSelection>(
         // defaults and leaves an unsupported model visibly unselected.
         ...(manualOverrides.boardType ? {} : {boardType: defaults?.boardType ?? ""}),
         ...(manualOverrides.panelType ? {} : {panelType: defaults?.panelType ?? ""}),
+        ...(manualOverrides.tickPerM || defaults?.tickPerM === undefined ? {} : {tickPerM: defaults.tickPerM}),
+        ...(manualOverrides.wheelBase || defaults?.wheelBase === undefined ? {} : {wheelBase: defaults.wheelBase}),
     } as T;
 };
 
@@ -67,7 +77,9 @@ export const applyFirmwareModelDefaults = <T extends FirmwareSelection>(
  */
 export const manualOverridesFromProvenance = (
     selection: FirmwareSelection,
-): Partial<Record<"boardType" | "panelType", boolean>> => ({
+): Partial<Record<"boardType" | "panelType" | "tickPerM" | "wheelBase", boolean>> => ({
     boardType: selection.boardTypeOrigin !== "auto",
     panelType: selection.panelTypeOrigin !== "auto",
+    tickPerM: selection.tickPerMOrigin !== "auto",
+    wheelBase: selection.wheelBaseOrigin !== "auto",
 });

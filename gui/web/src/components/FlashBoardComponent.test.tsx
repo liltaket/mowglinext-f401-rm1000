@@ -79,6 +79,17 @@ describe("FlashBoardComponent model/default integration", () => {
         expect(screen.getByRole("button", {name: /flash firmware/i})).toBeEnabled();
     });
 
+    it("selects the RM1000 yaw180 source-build target without claiming a prebuilt", async () => {
+        renderComponent("BiltemaRM1000");
+
+        await waitFor(() => {
+            expect(selectedLabel(0)).toBe("Mowgli - Biltema RM1000 (STM32F401, MPU6050 yaw 180°)");
+            expect(selectedLabel(1)).toBe("YardForce 900 ECO");
+        });
+        expect(screen.getByText("No prebuilt firmware for this model yet")).toBeInTheDocument();
+        expect(screen.getByRole("button", {name: /flash firmware/i})).toBeDisabled();
+    });
+
     it("follows a model change while preserving an individual board override", async () => {
         const view = renderComponent("YardForce500");
         await waitFor(() => expect(selectedLabel(1)).toBe("YardForce 500 Classic"));

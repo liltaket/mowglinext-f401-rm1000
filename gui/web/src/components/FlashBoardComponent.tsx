@@ -66,6 +66,8 @@ type Config = {
     perimeterWire: boolean
     boardTypeOrigin?: FirmwareFieldOrigin
     panelTypeOrigin?: FirmwareFieldOrigin
+    tickPerMOrigin?: FirmwareFieldOrigin
+    wheelBaseOrigin?: FirmwareFieldOrigin
     firmwareSelectionModel?: string
 }
 
@@ -115,6 +117,18 @@ export const FlashBoardComponent = (props: { onNext: () => void; mowerModel?: st
                 if (initializedModelRef.current && !applyingModelDefaultsRef.current) {
                     manualOverridesRef.current.panelType = true;
                     form.setValues({panelTypeOrigin: 'manual'});
+                }
+            })
+            onFieldValueChange('tickPerM', () => {
+                if (initializedModelRef.current && !applyingModelDefaultsRef.current) {
+                    manualOverridesRef.current.tickPerM = true;
+                    form.setValues({tickPerMOrigin: 'manual'});
+                }
+            })
+            onFieldValueChange('wheelBase', () => {
+                if (initializedModelRef.current && !applyingModelDefaultsRef.current) {
+                    manualOverridesRef.current.wheelBase = true;
+                    form.setValues({wheelBaseOrigin: 'manual'});
                 }
             })
             onFieldValueChange('firmwareSource', (field) => {
@@ -183,6 +197,10 @@ export const FlashBoardComponent = (props: { onNext: () => void; mowerModel?: st
                         (saved.boardTypeOrigin ?? "legacy") : "auto";
                     seeded.panelTypeOrigin = manualOverridesRef.current.panelType ?
                         (saved.panelTypeOrigin ?? "legacy") : "auto";
+                    seeded.tickPerMOrigin = manualOverridesRef.current.tickPerM ?
+                        (saved.tickPerMOrigin ?? "legacy") : "auto";
+                    seeded.wheelBaseOrigin = manualOverridesRef.current.wheelBase ?
+                        (saved.wheelBaseOrigin ?? "legacy") : "auto";
                     setSelectedBoard(String(seeded.boardType ?? ""));
                     setSelectedPanel(String(seeded.panelType ?? ""));
                     setIsExpert(seeded.firmwareSource === "custom");
@@ -195,6 +213,8 @@ export const FlashBoardComponent = (props: { onNext: () => void; mowerModel?: st
                     seeded.firmwareSelectionModel = model;
                     seeded.boardTypeOrigin = "auto";
                     seeded.panelTypeOrigin = "auto";
+                    seeded.tickPerMOrigin = "auto";
+                    seeded.wheelBaseOrigin = "auto";
                     setSelectedBoard(String(seeded.boardType ?? ""));
                     setSelectedPanel(String(seeded.panelType ?? ""));
                     applyingModelDefaultsRef.current = true;
@@ -235,6 +255,10 @@ export const FlashBoardComponent = (props: { onNext: () => void; mowerModel?: st
             (form.values as FirmwareSelection).boardTypeOrigin ?? "manual" : "auto";
         seeded.panelTypeOrigin = manualOverridesRef.current.panelType ?
             (form.values as FirmwareSelection).panelTypeOrigin ?? "manual" : "auto";
+        seeded.tickPerMOrigin = manualOverridesRef.current.tickPerM ?
+            (form.values as FirmwareSelection).tickPerMOrigin ?? "manual" : "auto";
+        seeded.wheelBaseOrigin = manualOverridesRef.current.wheelBase ?
+            (form.values as FirmwareSelection).wheelBaseOrigin ?? "manual" : "auto";
         applyingModelDefaultsRef.current = true;
         form.setValues(seeded);
         applyingModelDefaultsRef.current = false;
@@ -347,6 +371,10 @@ export const FlashBoardComponent = (props: { onNext: () => void; mowerModel?: st
                 (manualOverridesRef.current.boardType ? "manual" : "auto"),
             panelTypeOrigin: values.panelTypeOrigin ??
                 (manualOverridesRef.current.panelType ? "manual" : "auto"),
+            tickPerMOrigin: values.tickPerMOrigin ??
+                (manualOverridesRef.current.tickPerM ? "manual" : "auto"),
+            wheelBaseOrigin: values.wheelBaseOrigin ??
+                (manualOverridesRef.current.wheelBase ? "manual" : "auto"),
             firmwareSelectionModel: values.firmwareSelectionModel ??
                 mowerModelRef.current ?? configuredMowerModel,
         };
@@ -464,6 +492,9 @@ export const FlashBoardComponent = (props: { onNext: () => void; mowerModel?: st
                         }, {
                             label: "Mowgli - YardForce 500 B Variant",
                             value: "BOARD_YARDFORCE500B"
+                        }, {
+                            label: "Mowgli - Biltema RM1000 (STM32F401, MPU6050 yaw 180°)",
+                            value: "BOARD_BILTEMA_RM1000_MPU6050_YAW180"
                         },
                             {
                                 label: "Mowgli - LUV1000RI",

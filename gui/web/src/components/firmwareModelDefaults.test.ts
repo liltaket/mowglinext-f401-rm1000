@@ -19,6 +19,15 @@ describe("firmware model defaults", () => {
         });
     });
 
+    it("maps Biltema RM1000 to its F401 board and 900 ECO panel", () => {
+        expect(firmwareDefaultsForModel("BiltemaRM1000")).toEqual({
+            boardType: "BOARD_BILTEMA_RM1000_MPU6050_YAW180",
+            panelType: "PANEL_TYPE_YARDFORCE_900_ECO",
+            tickPerM: 331.6,
+            wheelBase: 0.325,
+        });
+    });
+
     it.each(["CUSTOM", "LUV1000RI", "unknown", undefined])(
         "does not guess for unsupported model %s",
         (model) => {
@@ -39,6 +48,20 @@ describe("firmware model defaults", () => {
             boardType: true,
             panelType: true,
         })).toEqual(manual);
+    });
+
+    it("keeps manual calibration overrides while applying RM1000 profile values", () => {
+        expect(applyFirmwareModelDefaults("BiltemaRM1000", {
+            boardType: "BOARD_YARDFORCE500B",
+            panelType: "PANEL_TYPE_YARDFORCE_500B_CLASSIC",
+            tickPerM: 300,
+            wheelBase: 0.4,
+        }, {boardType: true, panelType: true, tickPerM: true})).toEqual({
+            boardType: "BOARD_YARDFORCE500B",
+            panelType: "PANEL_TYPE_YARDFORCE_500B_CLASSIC",
+            tickPerM: 300,
+            wheelBase: 0.325,
+        });
     });
 
     it("updates the model-following field when only the other field is overridden", () => {
@@ -69,7 +92,7 @@ describe("firmware model defaults", () => {
         expect(manualOverridesFromProvenance({
             boardType: "BOARD_YARDFORCE500",
             panelType: "PANEL_TYPE_YARDFORCE_500_CLASSIC",
-        })).toEqual({boardType: true, panelType: true});
+        })).toEqual({boardType: true, panelType: true, tickPerM: true, wheelBase: true});
     });
 
     it("keeps only explicitly automatic fields following model changes", () => {
@@ -78,7 +101,9 @@ describe("firmware model defaults", () => {
             panelType: "PANEL_TYPE_YARDFORCE_500_CLASSIC",
             boardTypeOrigin: "manual",
             panelTypeOrigin: "auto",
+            tickPerMOrigin: "auto",
+            wheelBaseOrigin: "auto",
             firmwareSelectionModel: "YardForce500",
-        })).toEqual({boardType: true, panelType: false});
+        })).toEqual({boardType: true, panelType: false, tickPerM: false, wheelBase: false});
     });
 });

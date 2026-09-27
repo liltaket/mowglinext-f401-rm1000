@@ -68,6 +68,22 @@ export const MOWER_MODELS: MowerModel[] = [
         },
     },
     {
+        value: "BiltemaRM1000",
+        label: "mowerModels.BiltemaRM1000.label",
+        description: "mowerModels.BiltemaRM1000.description",
+        defaults: {
+            // Live values observed on this RM1000 host profile (2026-09-27),
+            // not geometry inferred from the F401 board type.
+            wheel_track: 0.325,
+            ticks_per_meter: 331.6,
+            wheel_pid_pwm_per_mps: 350,
+            wheel_pid_kp: 10,
+            wheel_pid_ki: 0.06,
+            wheel_pid_kd: 0,
+            wheel_pid_integral_limit: 45,
+        },
+    },
+    {
         value: "YardForceSA650",
         label: "mowerModels.YardForceSA650.label",
         description: "mowerModels.YardForceSA650.description",
